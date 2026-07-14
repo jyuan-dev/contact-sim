@@ -1,6 +1,7 @@
 import os
 import sys
 sys.path.append('/home/jyuan/jyuan-ws/contact-sim/third_party/gym-pusht')
+sys.path.append('/home/jyuan/jyuan-ws/contact-sim')
 import argparse
 import math
 import json
@@ -106,98 +107,7 @@ class RelativeActionWrapper(gym.ActionWrapper):
 # ----------------------------------------------------
 # 5. PushT Dataset Loader (Supporting Train/Val splits)
 # ----------------------------------------------------
-# ImageNet normalization constants used by SAVi
-IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-
-def normalize_img(img_tensor):
-    """Normalize a [C,H,W] tensor from [0,1] range to ImageNet zero-mean/unit-std."""
-    return (img_tensor - IMAGENET_MEAN) / IMAGENET_STD
-
-def denormalize_img(img_tensor):
-    """Denormalize a [C,H,W] tensor from ImageNet stats back to [0,1] range."""
-    return img_tensor * IMAGENET_STD.to(img_tensor.device) + IMAGENET_MEAN.to(img_tensor.device)
-
-def augment_background(img_np, bg_threshold=240):
-    """Replace white background pixels with a random color in a uint8 HWC image."""
-    # Detect background: pixels where all channels > threshold
-    bg_mask = np.all(img_np > bg_threshold, axis=-1)
-    # Random background color per image
-    rand_color = np.random.randint(0, 256, size=(3,), dtype=np.uint8)
-    img_aug = img_np.copy()
-    img_aug[bg_mask] = rand_color
-    return img_aug
-
-class PushTDataset(torch.utils.data.Dataset):
-    def __init__(self, h5_path, seq_len=8, image_size=(64, 64), split="train", val_ratio=0.05, shuffle_sequence=False, augment_bg=False):
-        self.h5_path = h5_path
-        self.seq_len = seq_len
-        self.image_size = image_size
-        self.shuffle_sequence = shuffle_sequence
-        self.augment_bg = augment_bg
-        self.f = None
-        
-        with h5py.File(h5_path, 'r') as f:
-            self.ep_offsets = f['ep_offset'][:]
-            self.ep_lens = f['ep_len'][:]
-            self.num_episodes = len(self.ep_lens)
-            
-        num_val = int(val_ratio * self.num_episodes)
-        num_train = self.num_episodes - num_val
-        
-        if split == "train":
-            self.indices = np.arange(num_train)
-        else:
-            self.indices = np.arange(num_train, self.num_episodes)
-            
-        # Compile flat frame indices list for random sampling
-        self.frame_indices = []
-        for idx in self.indices:
-            offset = self.ep_offsets[idx]
-            length = self.ep_lens[idx]
-            self.frame_indices.extend(range(offset, offset + length))
-        self.frame_indices = np.array(self.frame_indices)
-
-    def __len__(self):
-        return len(self.indices)
-
-    def __getitem__(self, idx):
-        if self.f is None:
-            self.f = h5py.File(self.h5_path, 'r')
-            
-        if self.shuffle_sequence:
-            # Sample non-consecutive random indices from across the entire split
-            sampled_indices = np.random.choice(self.frame_indices, size=self.seq_len, replace=False)
-            
-            raw_pixels = [self.f['pixels'][idx] for idx in sampled_indices]
-            actions = [self.f['action'][idx] for idx in sampled_indices]
-        else:
-            # Regular sequence extraction
-            actual_idx = self.indices[idx]
-            offset = self.ep_offsets[actual_idx]
-            length = self.ep_lens[actual_idx]
-            
-            start_idx = np.random.randint(0, length - self.seq_len + 1)
-            abs_start = offset + start_idx
-            
-            raw_pixels = self.f['pixels'][abs_start : abs_start + self.seq_len]
-            actions = self.f['action'][abs_start : abs_start + self.seq_len]
-        
-        processed_images = []
-        for img in raw_pixels:
-            resized = cv2.resize(img, self.image_size)
-            # Random background color augmentation during training
-            if self.augment_bg:
-                resized = augment_background(resized)
-            tensor_img = torch.tensor(resized, dtype=torch.float32).permute(2, 0, 1) / 255.0
-            # Normalize to zero-mean/unit-std (ImageNet stats)
-            tensor_img = normalize_img(tensor_img)
-            processed_images.append(tensor_img)
-            
-        images_tensor = torch.stack(processed_images)
-        actions_tensor = torch.tensor(np.array(actions), dtype=torch.float32)
-        
-        return images_tensor, actions_tensor
+from datasets.pusht import PushTDataset, normalize_img, denormalize_img, augment_background
 
 # ----------------------------------------------------
 # 6. cOCVP Dynamics Model (Action-Conditioned Transformer)

@@ -6,18 +6,13 @@ import torch
 import cv2
 from PIL import Image
 
-# Setup paths to import from scripts
+# Setup paths to import from datasets and models
 REPO_ROOT = '/home/jyuan/jyuan-ws/contact-sim'
-sys.path.insert(0, REPO_ROOT)
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
-# Add slotformer and base_slots paths as done in train_detr_pusht.py
-SLOTFORMER = os.path.join(REPO_ROOT, 'third_party', 'cjepa', 'src', 'third_party', 'slotformer')
-HDF5_DS = os.path.join(SLOTFORMER, 'base_slots')
-for p in [SLOTFORMER, HDF5_DS]:
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
-from scripts.train_detr_pusht import DETR, ResNetBackbone, Transformer, PushTMaskHDF5Dataset, box_cxcywh_to_xyxy
+from datasets.pusht import PushTMaskHDF5Dataset
+from models.detr import DETR, ResNetBackbone, Transformer, box_cxcywh_to_xyxy
 
 def box_to_mask(box_xyxy, shape=(64, 64)):
     """
