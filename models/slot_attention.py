@@ -7,10 +7,9 @@ from scipy.optimize import linear_sum_assignment
 
 # ── 1. StoSAVi Path Setup & Import ────────────────────────────────────────────
 REPO_ROOT  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SLOTFORMER = os.path.join(REPO_ROOT, 'third_party', 'cjepa', 'src', 'third_party', 'slotformer')
-HDF5_DS    = os.path.join(SLOTFORMER, 'base_slots')
+BASE_SLOTS = os.path.join(REPO_ROOT, 'third_party', 'base_slots')
 
-for p in [REPO_ROOT, SLOTFORMER, HDF5_DS, os.path.join(SLOTFORMER, 'base_slots', 'models')]:
+for p in [REPO_ROOT, BASE_SLOTS, os.path.join(BASE_SLOTS, 'models')]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
