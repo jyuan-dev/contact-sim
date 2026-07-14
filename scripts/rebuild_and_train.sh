@@ -22,7 +22,7 @@ echo "Dataset resized successfully!"
 echo "3. Launching training session with DETR-style bipartite matching..."
 tmux kill-session -t savi_detr_train 2>/dev/null || true
 rm -f train_savi_detr.log
-tmux new-session -d -s savi_detr_train "/home/jyuan/miniconda3/envs/contact-sim/bin/python -u scripts/train_savi_mask_detr.py > train_savi_detr.log 2>&1"
+tmux new-session -d -s savi_detr_train "/home/jyuan/miniconda3/envs/contact-sim/bin/python -u scripts/train_savi.py --dataset pusht > train_savi_detr.log 2>&1"
 
 echo "=== Pipeline successfully scheduled! ==="
 

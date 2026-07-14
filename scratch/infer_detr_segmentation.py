@@ -11,8 +11,8 @@ REPO_ROOT = '/home/jyuan/jyuan-ws/contact-sim'
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from datasets.pusht import PushTMaskHDF5Dataset
-from models.detr import DETR, ResNetBackbone, Transformer, box_cxcywh_to_xyxy
+from src.datasets.pusht import PushTMaskHDF5Dataset
+from src.models.detr import DETR, ResNetBackbone, Transformer, box_cxcywh_to_xyxy
 
 def box_to_mask(box_xyxy, shape=(64, 64)):
     """

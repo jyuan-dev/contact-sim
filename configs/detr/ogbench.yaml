@@ -1,0 +1,36 @@
+# OGBench CUBE DETR Config Stub
+h5_path: "/home/jyuan/.stable-wm/ogbench_cube.h5"
+resolution: [64, 64]
+n_sample_frames: 6
+frame_offset: 1
+train_frac: 0.8
+
+# Model parameters
+num_queries: 5
+num_classes: 3
+d_model: 128
+nhead: 4
+num_encoder_layers: 3
+num_decoder_layers: 3
+dim_feedforward: 512
+
+# Training
+max_epochs: 15
+batch_size: 256
+num_workers: 8
+lr: 0.0002
+clip_grad: 0.1
+warmup_pct: 0.05
+
+# Loss weights
+weight_class: 1.0
+weight_bbox: 5.0
+weight_giou: 2.0
+eos_coef: 0.1
+
+# I/O
+ckpt_dir: "/home/jyuan/.stable-wm/detr_ogbench"
+tb_dir: "/home/jyuan/.stable-wm/detr_ogbench/tb_logs"
+save_every_n_epochs: 2
+vis_every_n_epochs: 1
+n_vis_samples: 4

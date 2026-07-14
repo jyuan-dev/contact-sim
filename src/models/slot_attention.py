@@ -6,14 +6,14 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
 # ── 1. StoSAVi Path Setup & Import ────────────────────────────────────────────
-REPO_ROOT  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE_SLOTS = os.path.join(REPO_ROOT, 'third_party', 'base_slots')
+REPO_ROOT   = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SLOTFORMER  = os.path.join(REPO_ROOT, 'third_party', 'slotformer')
 
-for p in [REPO_ROOT, BASE_SLOTS, os.path.join(BASE_SLOTS, 'models')]:
+for p in [REPO_ROOT, SLOTFORMER, os.path.join(SLOTFORMER, 'slotformer', 'base_slots', 'models')]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from base_slots.models.savi import StoSAVi
+from slotformer.base_slots.models.savi import StoSAVi
 
 
 # ── 2. DETR Hungarian Matcher for Slot Masks ──────────────────────────────────
