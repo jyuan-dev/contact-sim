@@ -6,6 +6,10 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
 # ── 1. StoSAVi Path Setup & Import ────────────────────────────────────────────
+import types
+if 'phyre' not in sys.modules:
+    sys.modules['phyre'] = types.ModuleType('phyre')
+
 REPO_ROOT   = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SLOTFORMER  = os.path.join(REPO_ROOT, 'third_party', 'slotformer')
 
