@@ -48,7 +48,15 @@ def project_3d_to_2d(pos_3d, model, data, camera_name="front_pixels", width=224,
     return (int(px), int(py))
 
 def main():
-    dataset_path = "/home/jyuan/.cache/swm/datasets/ogbench/cube_single_expert.lance"
+    import argparse
+    parser = argparse.ArgumentParser(description="Visualize OGBench Cube Replay with Force Vectors and Segmentation")
+    parser.add_argument("--dataset-path", type=str, default="/home/jyuan/.cache/swm/datasets/ogbench/cube_single_expert.lance",
+                        help="Path to Lance dataset directory")
+    parser.add_argument("--unoccluded", action="store_true", default=False,
+                        help="Render unoccluded cube mask by hiding the gripper geoms (default: False)")
+    args = parser.parse_args()
+
+    dataset_path = args.dataset_path
     output_dir = os.path.join(REPO_ROOT, "scratch")
     os.makedirs(output_dir, exist_ok=True)
     
@@ -56,8 +64,8 @@ def main():
     seg_gif_path    = os.path.join(output_dir, "ogbench_episode_0_segmentation.gif")
     png_output_path = os.path.join(output_dir, "ogbench_episode_0_analysis.png")
     
-    print(f"Initializing OGBenchReplayer for: {dataset_path}")
-    replayer = OGBenchReplayer(h5_path=dataset_path, run_physics=True)
+    print(f"Initializing OGBenchReplayer for: {dataset_path} (unoccluded={args.unoccluded})")
+    replayer = OGBenchReplayer(h5_path=dataset_path, run_physics=True, unoccluded_masks=args.unoccluded)
     
     print("Loading raw episode 0 data...")
     raw_frames, states, actions = replayer._load_episode_raw(0)
@@ -237,19 +245,25 @@ def main():
                     cv2.arrowedLine(frame, px_contact, px_frict_end, (0, 165, 255), 2, cv2.LINE_AA, 0, 0.3)
                     
         # ── Render and record segmentation masks ──────────────────────
-        # Standard segmentation (for gripper and target masks)
+        # Standard segmentation (for gripper, target, and default cube masks)
         seg = replayer._render_segmentation(env, model, data, H, W, renderer=renderer_seg)
         target_mask  = replayer._seg_to_mask(seg, model, target_geom_id_sets[0])
         gripper_mask = replayer._seg_to_mask(seg, model, gripper_geom_ids)
         
-        # Unoccluded cube mask: hide gripper geoms so the grasped cube
-        # is fully visible even when the gripper fingers wrap around it.
-        cube_mask = replayer._render_unoccluded_mask(
-            env, model, data, H, W,
-            target_geom_ids=cube_geom_id_sets[0],
-            occluder_geom_ids=gripper_geom_ids,
-            renderer=renderer_seg,
-        )
+        if args.unoccluded:
+            # Unoccluded cube mask: hide gripper geoms so the grasped cube
+            # is fully visible even when the gripper fingers wrap around it.
+            cube_mask = replayer._render_unoccluded_mask(
+                env, model, data, H, W,
+                target_geom_ids=cube_geom_id_sets[0],
+                occluder_geom_ids=gripper_geom_ids,
+                renderer=renderer_seg,
+            )
+            cube_lbl = "Cube (unoccluded)"
+        else:
+            # Default standard camera-visible cube mask
+            cube_mask = replayer._seg_to_mask(seg, model, cube_geom_id_sets[0])
+            cube_lbl = "Cube"
         
         cube_masks.append(cube_mask)
         target_masks.append(target_mask)
@@ -264,7 +278,7 @@ def main():
         cube_vis    = np.zeros((H_f, W_f, 3), dtype=np.uint8); cube_vis[cube_mask > 0] = (80, 200, 255)
         gripper_vis = np.zeros((H_f, W_f, 3), dtype=np.uint8); gripper_vis[gripper_mask_clean > 0] = (80, 255, 140)
         target_vis  = np.zeros((H_f, W_f, 3), dtype=np.uint8); target_vis[target_mask > 0] = (255, 100, 80)
-        for vis_img, lbl in [(frame.copy(), "Original"), (cube_vis, "Cube (unoccluded)"), (gripper_vis, "Gripper"), (target_vis, "Goal")]:
+        for vis_img, lbl in [(frame.copy(), "Original"), (cube_vis, cube_lbl), (gripper_vis, "Gripper"), (target_vis, "Goal")]:
             cv2.putText(vis_img, lbl, (4, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255,255,255), 1, cv2.LINE_AA)
         seg_panel = np.concatenate([frame.copy(), cube_vis, gripper_vis, target_vis], axis=1)
         seg_vis_frames.append(seg_panel)
@@ -316,9 +330,10 @@ def main():
     # Rows 2-5: key frames
     key_steps = [10, 35, 60, 85]
     key_steps = [min(s, T-1) for s in key_steps]
+    cube_row_label = "Cube (unoccluded)" if args.unoccluded else "Cube"
     row_info = [
         ("Original + Goal", processed_frames, None),
-        ("Cube (grasped)",  cube_masks,       "Blues"),
+        (cube_row_label,    cube_masks,       "Blues"),
         ("Gripper",         gripper_masks,    "Greens"),
         ("Target/Goal",     target_masks,     "Reds"),
     ]

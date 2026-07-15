@@ -126,10 +126,12 @@ class BaseReplayer(ABC):
         run_physics: bool = True,
         num_workers: int = 1,
         episodes: list[int] | None = None,
+        unoccluded_masks: bool = False,
     ) -> None:
         self.h5_path     = h5_path
         self.run_physics  = run_physics
         self.num_workers  = num_workers
+        self.unoccluded_masks = unoccluded_masks
 
         n_episodes = self._read_episode_count()
         self.episode_indices: list[int] = (
@@ -612,6 +614,7 @@ class OGBenchReplayer(BaseReplayer):
         episodes: list[int] | None = None,
         env_type: str = "single",
         lance_path: str | None = None,
+        unoccluded_masks: bool = False,
     ) -> None:
         # Ensure stable-worldmodel is importable
         if _SWM_ROOT not in sys.path:
@@ -622,6 +625,7 @@ class OGBenchReplayer(BaseReplayer):
         self.env_type   = env_type
         self.run_physics = run_physics
         self.num_workers = num_workers
+        self.unoccluded_masks = unoccluded_masks
 
         # Load the dataset to discover episode structure.
         self._ds = self._open_dataset(self.lance_path)
@@ -871,15 +875,25 @@ class OGBenchReplayer(BaseReplayer):
             # ── Render segmentation masks ─────────────────────────────────
             seg = self._render_segmentation(env, model, data, H, W)
             for ci in range(num_cubes):
-                cube_masks[ci][t] = self._seg_to_mask(
-                    seg, model, cube_geom_id_sets[ci]
-                )
+                if self.unoccluded_masks:
+                    cube_masks[ci][t] = self._render_unoccluded_mask(
+                        env, model, data, H, W,
+                        target_geom_ids=cube_geom_id_sets[ci],
+                        occluder_geom_ids=gripper_geom_ids,
+                    )
+                else:
+                    cube_masks[ci][t] = self._seg_to_mask(
+                        seg, model, cube_geom_id_sets[ci]
+                    )
                 target_masks[ci][t] = self._seg_to_mask(
                     seg, model, target_geom_id_sets[ci]
                 )
-            gripper_masks[t] = self._seg_to_mask(
-                seg, model, gripper_geom_ids
-            )
+            
+            gripper_mask_raw = self._seg_to_mask(seg, model, gripper_geom_ids)
+            # Ensure grasped cube is clean from gripper mask
+            gripper_mask_clean = gripper_mask_raw.copy()
+            gripper_mask_clean[cube_masks[0][t] > 0] = 0
+            gripper_masks[t] = gripper_mask_clean
 
         masks = {f"cube_{i}": cube_masks[i] for i in range(num_cubes)}
         for i in range(num_cubes):
