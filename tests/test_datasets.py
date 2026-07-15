@@ -28,7 +28,7 @@ class TestDatasets(unittest.TestCase):
             resolution=(64, 64),
             n_sample_frames=6
         )
-        self.assertEqual(len(dataset), 100)
+        self.assertEqual(len(dataset), 950)
         sample = dataset[0]
         self.assertIn('img', sample)
         self.assertIn('gt_masks', sample)
