@@ -375,7 +375,17 @@ class PushTReplayer(BaseReplayer):
 
             block_masks[t] = _pusht_render_mask(self._env, "block", w, h)
             agent_masks[t] = _pusht_render_mask(self._env, "agent", w, h)
-            goal_masks[t]  = _pusht_render_mask(self._env, "goal",  w, h)
+            
+            g_mask = _pusht_render_mask(self._env, "goal",  w, h)
+            if not self.unoccluded_masks:
+                # If camera-visible only (default), the moving block and the agent
+                # occlude the goal target underneath them on the screen.
+                g_mask_clean = g_mask.copy()
+                g_mask_clean[block_masks[t] > 0] = 0
+                g_mask_clean[agent_masks[t] > 0] = 0
+                goal_masks[t] = g_mask_clean
+            else:
+                goal_masks[t] = g_mask
 
         return EpisodeData(
             episode_idx      = ep_idx,
