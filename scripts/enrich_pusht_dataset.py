@@ -132,7 +132,7 @@ def process_episode_chunk(chunk_args):
     """
     Worker function to process a chunk of episodes in parallel.
     """
-    chunk_idx, episodes_to_run = chunk_args
+    chunk_idx, episodes_to_run, unoccluded = chunk_args
     
     # Initialize pygame for this process (SDL dummy driver must be set)
     pygame.init()
@@ -192,6 +192,13 @@ def process_episode_chunk(chunk_args):
             a_mask = render_mask(env, target='agent', width=224, height=224)
             g_mask = render_mask(env, target='goal', width=224, height=224)
             
+            if not unoccluded:
+                # Subtract agent and block masks from the goal mask to show only camera-visible parts
+                g_mask_clean = g_mask.copy()
+                g_mask_clean[b_mask > 0] = 0
+                g_mask_clean[a_mask > 0] = 0
+                g_mask = g_mask_clean
+
             chunk_b_masks.append(b_mask)
             chunk_a_masks.append(a_mask)
             chunk_g_masks.append(g_mask)
@@ -220,6 +227,8 @@ def main():
                         help='If set, runs on a test subset of 1 episode and writes to scratch')
     parser.add_argument('--num-workers', type=int, default=24,
                         help='Number of workers for parallel mask generation')
+    parser.add_argument('--unoccluded', action='store_true', default=False,
+                        help='If set, target T-shape masks will not be occluded by block or agent')
     args = parser.parse_args()
 
     input_h5 = args.input
@@ -265,7 +274,7 @@ def main():
             global_step_idx += length
             
             if len(current_chunk_episodes) >= episodes_per_chunk or ep_idx == num_episodes - 1:
-                chunks.append((chunk_idx, current_chunk_episodes))
+                chunks.append((chunk_idx, current_chunk_episodes, args.unoccluded))
                 current_chunk_episodes = []
                 chunk_idx += 1
                 
