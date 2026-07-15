@@ -483,6 +483,48 @@ class TestOGBenchReplayer(unittest.TestCase):
         self.assertEqual(ep_data.masks["gripper"].shape, (4, 224, 224))
         self.assertEqual(ep_data.masks["target_0"].shape, (4, 224, 224))
 
+    @patch('mujoco.Renderer')
+    def test_ogbench_render_unoccluded_mask(self, mock_renderer_cls):
+        from src.datasets.replay import OGBenchReplayer
+        r = OGBenchReplayer(h5_path="mock_lance_dir")
+
+        # Mock model, data, env
+        mock_model = MagicMock()
+        mock_model.ngeom = 5
+        geom_mocks = [MagicMock() for _ in range(5)]
+        for i, g in enumerate(geom_mocks):
+            g.rgba = np.array([1, 1, 1, 1], dtype=np.float32)
+        mock_model.geom = lambda idx: geom_mocks[idx]
+
+        mock_data = MagicMock()
+        mock_env = MagicMock()
+
+        # Mock renderer return
+        mock_renderer = MagicMock()
+        # returns (H, W, 2) int32 map where geom 2 is visible
+        seg_map = np.zeros((224, 224, 2), dtype=np.int32)
+        seg_map[50:100, 50:100, 0] = 2  # target geom
+        mock_renderer.render.return_value = seg_map
+        mock_renderer_cls.return_value = mock_renderer
+
+        # Call the method
+        mask = r._render_unoccluded_mask(
+            env=mock_env,
+            model=mock_model,
+            data=mock_data,
+            height=224,
+            width=224,
+            target_geom_ids={2},
+            occluder_geom_ids={3},
+        )
+
+        # Assertions
+        self.assertEqual(mask.shape, (224, 224))
+        self.assertEqual(mask[75, 75], 255)
+        self.assertEqual(mask[0, 0], 0)
+        # Verify occluder geom alpha was restored
+        self.assertEqual(geom_mocks[3].rgba[3], 1.0)
+
     def test_ogbench_load_episode_enriched(self):
         from src.datasets.replay import OGBenchReplayer
         # Write a mock enriched HDF5
