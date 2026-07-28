@@ -1134,6 +1134,85 @@ class OGBenchReplayer(BaseReplayer):
         return mask
 
     @staticmethod
+    def _render_depth_tested_masks(
+        env, model, data, height: int, width: int,
+        category_geom_dict: dict[str, set[int]],
+        renderer=None,
+    ) -> dict[str, np.ndarray]:
+        """Segment multiple categories in isolation and resolve pixel ownership via 3D depth testing.
+
+        For each category, renders its isolated segmentation map and depth map.
+        Per pixel, the category with the closest camera depth (smallest z-value > 0)
+        wins the pixel ownership.
+
+        Parameters
+        ----------
+        category_geom_dict : dict[str, set[int]]
+            Mapping of category names (e.g. 'cube', 'gripper', 'target') to geom ID sets.
+        renderer : mujoco.Renderer, optional
+
+        Returns
+        -------
+        masks : dict[str, np.ndarray]
+            Mapping of category names to (H, W) uint8 binary masks (255/0).
+        """
+        import mujoco
+
+        _own_renderer = renderer is None
+        if _own_renderer:
+            renderer = mujoco.Renderer(model, height=height, width=width)
+
+        all_geoms = set(range(model.ngeom))
+        categories = list(category_geom_dict.keys())
+        depth_maps = []
+
+        try:
+            for cat in categories:
+                target_gids = category_geom_dict[cat]
+                hide_gids = all_geoms - target_gids
+
+                orig_pos = {}
+                saved_rgba = {}
+                for gid in target_gids:
+                    saved_rgba[gid] = float(model.geom(gid).rgba[3])
+                    model.geom(gid).rgba[3] = 1.0
+                for gid in hide_gids:
+                    orig_pos[gid] = model.geom_pos[gid].copy()
+                    model.geom_pos[gid] = [999.0, 999.0, 999.0]
+
+                try:
+                    renderer.update_scene(data, camera="front_pixels")
+                    renderer.enable_depth_rendering()
+                    depth = renderer.render().copy()
+                    renderer.disable_depth_rendering()
+
+                    renderer.enable_segmentation_rendering()
+                    seg = renderer.render()[:, :, 0].copy()
+                    renderer.disable_segmentation_rendering()
+                finally:
+                    for gid, pos in orig_pos.items():
+                        model.geom_pos[gid] = pos
+                    for gid, alpha in saved_rgba.items():
+                        model.geom(gid).rgba[3] = alpha
+
+                cat_mask = np.isin(seg, list(target_gids))
+                depth[~cat_mask] = np.inf
+                depth_maps.append(depth)
+        finally:
+            if _own_renderer:
+                renderer.close()
+
+        depth_stack = np.stack(depth_maps, axis=0)  # (N_cat, H, W)
+        min_idx = np.argmin(depth_stack, axis=0)
+        min_val = np.min(depth_stack, axis=0)
+
+        masks = {}
+        for idx, cat in enumerate(categories):
+            m = (min_idx == idx) & (min_val < np.inf)
+            masks[cat] = m.astype(np.uint8) * 255
+        return masks
+
+    @staticmethod
     def _seg_to_mask(
         seg: np.ndarray, model, geom_id_set: set
     ) -> np.ndarray:

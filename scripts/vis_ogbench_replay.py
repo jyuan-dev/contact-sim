@@ -250,14 +250,18 @@ def main():
                     cv2.arrowedLine(frame, px_contact, px_frict_end, (0, 165, 255), 2, cv2.LINE_AA, 0, 0.3)
                     
         # ── Render and record segmentation masks ──────────────────────
-        # Single-pass depth-sorted segmentation (with opaque target block so depth sorting is 100% accurate)
-        seg = replayer._render_segmentation(
+        # Segment all categories in isolation and resolve pixel ownership via 3D camera depth testing
+        cat_masks = replayer._render_depth_tested_masks(
             env, model, data, H, W,
+            category_geom_dict={
+                "cube": cube_geom_id_sets[0],
+                "gripper": gripper_geom_ids,
+                "target": target_geom_id_sets[0],
+            },
             renderer=renderer_seg,
-            opaque_geom_ids=target_geom_id_sets[0],
         )
-        target_mask  = replayer._seg_to_mask(seg, model, target_geom_id_sets[0])
-        gripper_mask = replayer._seg_to_mask(seg, model, gripper_geom_ids)
+        target_mask  = cat_masks["target"]
+        gripper_mask = cat_masks["gripper"]
         
         if args.unoccluded:
             # Unoccluded cube mask: hide gripper geoms so the grasped cube
@@ -270,7 +274,7 @@ def main():
             )
             cube_lbl = "Cube (unoccluded)"
         else:
-            cube_mask = replayer._seg_to_mask(seg, model, cube_geom_id_sets[0])
+            cube_mask = cat_masks["cube"]
             cube_lbl = "Cube"
         
         cube_masks.append(cube_mask)
