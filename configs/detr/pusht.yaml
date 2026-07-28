@@ -1,6 +1,6 @@
 # Data
-h5_path: "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5"
-resolution: [64, 64]
+h5_path: "/home/jyuan/.stable-wm/pusht_expert_train_enriched.h5"
+resolution: [224, 224]
 n_sample_frames: 6
 frame_offset: 1
 train_frac: 0.8
@@ -16,9 +16,9 @@ dim_feedforward: 512
 
 # Training
 max_epochs: 15
-batch_size: 256
+batch_size: 32
 num_workers: 8
-lr: 0.0002
+lr: 0.0001
 clip_grad: 0.1
 warmup_pct: 0.05
 
