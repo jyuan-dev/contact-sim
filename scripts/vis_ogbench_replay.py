@@ -245,10 +245,18 @@ def main():
                     cv2.arrowedLine(frame, px_contact, px_frict_end, (0, 165, 255), 2, cv2.LINE_AA, 0, 0.3)
                     
         # ── Render and record segmentation masks ──────────────────────
-        # Standard segmentation (for gripper, target, and default cube masks)
-        seg = replayer._render_segmentation(env, model, data, H, W, renderer=renderer_seg)
-        target_mask  = replayer._seg_to_mask(seg, model, target_geom_id_sets[0])
-        gripper_mask = replayer._seg_to_mask(seg, model, gripper_geom_ids)
+        # Isolated multi-pass rendering (eliminates gripper edge bleeding & alpha artifacts)
+        target_mask = replayer._render_isolated_mask(
+            env, model, data, H, W,
+            target_geom_ids=target_geom_id_sets[0],
+            hide_geom_ids=gripper_geom_ids,
+            renderer=renderer_seg,
+        )
+        gripper_mask = replayer._render_isolated_mask(
+            env, model, data, H, W,
+            target_geom_ids=gripper_geom_ids,
+            renderer=renderer_seg,
+        )
         
         if args.unoccluded:
             # Unoccluded cube mask: hide gripper geoms so the grasped cube
@@ -261,8 +269,11 @@ def main():
             )
             cube_lbl = "Cube (unoccluded)"
         else:
-            # Default standard camera-visible cube mask
-            cube_mask = replayer._seg_to_mask(seg, model, cube_geom_id_sets[0])
+            cube_mask = replayer._render_isolated_mask(
+                env, model, data, H, W,
+                target_geom_ids=cube_geom_id_sets[0],
+                renderer=renderer_seg,
+            )
             cube_lbl = "Cube"
         
         cube_masks.append(cube_mask)

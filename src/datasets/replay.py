@@ -1063,6 +1063,62 @@ class OGBenchReplayer(BaseReplayer):
         return mask
 
     @staticmethod
+    def _render_isolated_mask(
+        env, model, data, height: int, width: int,
+        target_geom_ids: set[int],
+        hide_geom_ids: set[int] | None = None,
+        renderer=None,
+    ) -> np.ndarray:
+        """Render an isolated binary mask for *target_geom_ids*.
+
+        Forces target geoms to be 100% opaque (rgba[3] = 1.0) and hides
+        *hide_geom_ids* (rgba[3] = 0.0) during the render pass to eliminate
+        subpixel edge bleeding, alpha blending, and Z-buffer misclassifications.
+        Restores original RGBA values after rendering.
+
+        Returns
+        -------
+        mask : (H, W) uint8   (255 = target geom visible, 0 = else)
+        """
+        import mujoco
+
+        saved_rgba = {}
+        hide_geom_ids = hide_geom_ids or set()
+
+        # Save and set target geom alpha to opaque (1.0)
+        for gid in target_geom_ids:
+            saved_rgba[gid] = list(model.geom(gid).rgba)
+            model.geom(gid).rgba[3] = 1.0
+
+        # Save and hide occluder / conflicting geoms (0.0)
+        for gid in hide_geom_ids:
+            if gid not in saved_rgba:
+                saved_rgba[gid] = list(model.geom(gid).rgba)
+            model.geom(gid).rgba[3] = 0.0
+
+        try:
+            _own_renderer = renderer is None
+            if _own_renderer:
+                renderer = mujoco.Renderer(model, height=height, width=width)
+            renderer.update_scene(data, camera="front_pixels")
+            renderer.enable_segmentation_rendering()
+            seg = renderer.render()  # (H, W, 2) int32
+            renderer.disable_segmentation_rendering()
+            if _own_renderer:
+                renderer.close()
+        finally:
+            # Restore all modified geom RGBA values
+            for gid, rgba in saved_rgba.items():
+                model.geom(gid).rgba = rgba
+
+        # Build clean binary mask
+        geom_map = seg[:, :, 0]
+        mask = np.zeros((height, width), dtype=np.uint8)
+        for gid in target_geom_ids:
+            mask[geom_map == gid] = 255
+        return mask
+
+    @staticmethod
     def _seg_to_mask(
         seg: np.ndarray, model, geom_id_set: set
     ) -> np.ndarray:
