@@ -64,6 +64,11 @@ def main():
     seg_gif_path    = os.path.join(output_dir, "ogbench_episode_0_segmentation.gif")
     png_output_path = os.path.join(output_dir, "ogbench_episode_0_analysis.png")
     
+    # Remove old files if present before generating fresh ones
+    for p in (gif_output_path, seg_gif_path, png_output_path):
+        if os.path.exists(p):
+            os.remove(p)
+    
     print(f"Initializing OGBenchReplayer for: {dataset_path} (unoccluded={args.unoccluded})")
     replayer = OGBenchReplayer(h5_path=dataset_path, run_physics=True, unoccluded_masks=args.unoccluded)
     
