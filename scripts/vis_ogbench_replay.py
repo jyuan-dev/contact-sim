@@ -245,18 +245,14 @@ def main():
                     cv2.arrowedLine(frame, px_contact, px_frict_end, (0, 165, 255), 2, cv2.LINE_AA, 0, 0.3)
                     
         # ── Render and record segmentation masks ──────────────────────
-        # Isolated multi-pass rendering (eliminates gripper edge bleeding & alpha artifacts)
-        target_mask = replayer._render_isolated_mask(
+        # Single-pass depth-sorted segmentation (with opaque target block so depth sorting is 100% accurate)
+        seg = replayer._render_segmentation(
             env, model, data, H, W,
-            target_geom_ids=target_geom_id_sets[0],
-            hide_geom_ids=gripper_geom_ids,
             renderer=renderer_seg,
+            opaque_geom_ids=target_geom_id_sets[0],
         )
-        gripper_mask = replayer._render_isolated_mask(
-            env, model, data, H, W,
-            target_geom_ids=gripper_geom_ids,
-            renderer=renderer_seg,
-        )
+        target_mask  = replayer._seg_to_mask(seg, model, target_geom_id_sets[0])
+        gripper_mask = replayer._seg_to_mask(seg, model, gripper_geom_ids)
         
         if args.unoccluded:
             # Unoccluded cube mask: hide gripper geoms so the grasped cube
@@ -269,25 +265,17 @@ def main():
             )
             cube_lbl = "Cube (unoccluded)"
         else:
-            cube_mask = replayer._render_isolated_mask(
-                env, model, data, H, W,
-                target_geom_ids=cube_geom_id_sets[0],
-                renderer=renderer_seg,
-            )
+            cube_mask = replayer._seg_to_mask(seg, model, cube_geom_id_sets[0])
             cube_lbl = "Cube"
         
         cube_masks.append(cube_mask)
         target_masks.append(target_mask)
-        # Exclude cube and target pixels from gripper mask
-        gripper_mask_clean = gripper_mask.copy()
-        gripper_mask_clean[cube_mask > 0] = 0
-        gripper_mask_clean[target_mask > 0] = 0
-        gripper_masks.append(gripper_mask_clean)
+        gripper_masks.append(gripper_mask)
         
         # Build 4-panel segmentation visualization (original | cube | gripper | target)
         H_f, W_f = frame.shape[:2]
         cube_vis    = np.zeros((H_f, W_f, 3), dtype=np.uint8); cube_vis[cube_mask > 0] = (80, 200, 255)
-        gripper_vis = np.zeros((H_f, W_f, 3), dtype=np.uint8); gripper_vis[gripper_mask_clean > 0] = (80, 255, 140)
+        gripper_vis = np.zeros((H_f, W_f, 3), dtype=np.uint8); gripper_vis[gripper_mask > 0] = (80, 255, 140)
         target_vis  = np.zeros((H_f, W_f, 3), dtype=np.uint8); target_vis[target_mask > 0] = (255, 100, 80)
         for vis_img, lbl in [(frame.copy(), "Original"), (cube_vis, cube_lbl), (gripper_vis, "Gripper"), (target_vis, "Goal")]:
             cv2.putText(vis_img, lbl, (4, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255,255,255), 1, cv2.LINE_AA)

@@ -986,31 +986,46 @@ class OGBenchReplayer(BaseReplayer):
     def _render_segmentation(
         env, model, data, height: int, width: int,
         renderer=None,
+        opaque_geom_ids: set[int] | None = None,
     ) -> np.ndarray:
         """Render a per-pixel geom-ID segmentation map (H, W) int32.
 
         Parameters
         ----------
         renderer : mujoco.Renderer, optional
-            A pre-allocated renderer to reuse (avoids creating a new GL context
-            on every frame, which is very slow).  If None, a temporary renderer
-            is created and immediately closed.
+            A pre-allocated renderer to reuse.
+        opaque_geom_ids : set[int], optional
+            Geom IDs (such as semi-transparent target blocks) to temporarily force
+            to 100% opaque (rgba[3] = 1.0) so OpenGL depth-sorting correctly resolves them.
 
         Returns
         -------
         geom_ids : (H, W) int32
-            Geom ID per pixel.  -1 for sky/background pixels.
+            Geom ID per pixel. -1 for sky/background pixels.
         """
         import mujoco
-        _own_renderer = renderer is None
-        if _own_renderer:
-            renderer = mujoco.Renderer(model, height=height, width=width)
-        renderer.update_scene(data, camera="front_pixels")
-        renderer.enable_segmentation_rendering()
-        seg = renderer.render()  # (H, W, 2) int32: [geom_id, type_id]
-        renderer.disable_segmentation_rendering()
-        if _own_renderer:
-            renderer.close()
+
+        saved_alpha = {}
+        if opaque_geom_ids:
+            for gid in opaque_geom_ids:
+                saved_alpha[gid] = float(model.geom(gid).rgba[3])
+                model.geom(gid).rgba[3] = 1.0
+
+        try:
+            _own_renderer = renderer is None
+            if _own_renderer:
+                renderer = mujoco.Renderer(model, height=height, width=width)
+            renderer.update_scene(data, camera="front_pixels")
+            renderer.enable_segmentation_rendering()
+            seg = renderer.render()  # (H, W, 2) int32: [geom_id, type_id]
+            renderer.disable_segmentation_rendering()
+            if _own_renderer:
+                renderer.close()
+        finally:
+            if saved_alpha:
+                for gid, alpha in saved_alpha.items():
+                    model.geom(gid).rgba[3] = alpha
+
         # Channel 0 already contains geom IDs with -1 for background.
         return seg[:, :, 0].copy()
 
