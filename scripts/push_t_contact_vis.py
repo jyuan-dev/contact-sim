@@ -185,7 +185,7 @@ def main():
         
     print(f"Saving video to {output_path}...")
     os.makedirs(output_dir, exist_ok=True)
-    imageio.mimsave(output_path, processed_frames, fps=10)
+    imageio.mimsave(output_path, processed_frames, fps=10, loop=0)
     print("Replay with frictional forces saved successfully!")
 
 if __name__ == '__main__':

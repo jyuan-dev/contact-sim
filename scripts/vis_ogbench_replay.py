@@ -301,10 +301,10 @@ def main():
         
     # ── Save outputs ──────────────────────────────────────────────────
     print(f"Saving replay GIF to: {gif_output_path}")
-    imageio.mimsave(gif_output_path, processed_frames, fps=10)
+    imageio.mimsave(gif_output_path, processed_frames, fps=10, loop=0)
     
     print(f"Saving segmentation GIF to: {seg_gif_path}")
-    imageio.mimsave(seg_gif_path, seg_vis_frames, fps=10)
+    imageio.mimsave(seg_gif_path, seg_vis_frames, fps=10, loop=0)
     
     print("Generating forces and segmentation analysis plots...")
     fig = plt.figure(figsize=(14, 14), dpi=100, facecolor="#0d1117")

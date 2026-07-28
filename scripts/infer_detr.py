@@ -171,7 +171,7 @@ def main():
     output_dir = os.path.join(REPO_ROOT, 'scratch')
     os.makedirs(output_dir, exist_ok=True)
     gif_path = os.path.join(output_dir, 'detr_inference.gif')
-    imageio.mimsave(gif_path, frames_out, fps=4)
+    imageio.mimsave(gif_path, frames_out, fps=4, loop=0)
     print(f"Successfully saved inference video to: {gif_path}")
     
     # Save a comparison grid image of some frames

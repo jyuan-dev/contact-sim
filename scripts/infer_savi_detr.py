@@ -197,7 +197,7 @@ def main():
 
     if HAS_PIL and gif_frames:
         gif_path = os.path.join(args.out_dir, 'overview.gif')
-        imageio.mimsave(gif_path, gif_frames, fps=2)
+        imageio.mimsave(gif_path, gif_frames, fps=2, loop=0)
         print(f"  GIF saved: {gif_path}")
 
     print(f"All images saved in: {args.out_dir}")
