@@ -130,6 +130,22 @@ def main():
     renderer_rgb = mujoco.Renderer(model, height=H, width=W)
     renderer_seg = mujoco.Renderer(model, height=H, width=W)  # reused for segmentation
     
+    # ── Pre-compute static goal mask (constant across entire trajectory) ──
+    from ogbench.manipspace import lie
+    target_pos_0 = target_pos_seq[0]
+    target_yaw_0 = target_yaw_seq[0][0]
+    target_quat_0 = lie.SO3.from_z_radians(target_yaw_0).wxyz.tolist()
+    mocap_id = env._cube_target_mocap_ids[env._target_block]
+    data.mocap_pos[mocap_id] = target_pos_0
+    data.mocap_quat[mocap_id] = target_quat_0
+    mujoco.mj_forward(model, data)
+
+    static_target_mask = replayer._render_isolated_mask(
+        env, model, data, H, W,
+        target_geom_ids=target_geom_id_sets[0],
+        renderer=renderer_seg,
+    )
+    
     print("Replaying physics and drawing overlays...")
     for t in range(T):
         # ── Set state ─────────────────────────────────────────────────
@@ -141,12 +157,10 @@ def main():
             data.qpos[:len(state)] = state
 
         # ── Set target mocap position and orientation ─────────────────
-        from ogbench.manipspace import lie
         target_pos = target_pos_seq[t]
         target_yaw = target_yaw_seq[t][0]
         target_quat = lie.SO3.from_z_radians(target_yaw).wxyz.tolist()
 
-        mocap_id = env._cube_target_mocap_ids[env._target_block]
         data.mocap_pos[mocap_id] = target_pos
         data.mocap_quat[mocap_id] = target_quat
 
@@ -250,17 +264,18 @@ def main():
                     cv2.arrowedLine(frame, px_contact, px_frict_end, (0, 165, 255), 2, cv2.LINE_AA, 0, 0.3)
                     
         # ── Render and record segmentation masks ──────────────────────
-        # Segment all categories in isolation and resolve pixel ownership via 3D camera depth testing
+        # Goal mask is virtual and static across the whole trajectory
+        target_mask = static_target_mask
+        
+        # Dynamic category segmentation (gripper and cube)
         cat_masks = replayer._render_depth_tested_masks(
             env, model, data, H, W,
             category_geom_dict={
                 "cube": cube_geom_id_sets[0],
                 "gripper": gripper_geom_ids,
-                "target": target_geom_id_sets[0],
             },
             renderer=renderer_seg,
         )
-        target_mask  = cat_masks["target"]
         gripper_mask = cat_masks["gripper"]
         
         if args.unoccluded:
