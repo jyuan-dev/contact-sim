@@ -298,6 +298,29 @@ def main():
         seg_panel = np.concatenate([frame.copy(), cube_vis, gripper_vis, target_vis], axis=1)
         seg_vis_frames.append(seg_panel)
         
+        # ── Apply colored segmentation masks directly onto source RGB frame ──
+        masked_frame = frame.copy().astype(np.float32)
+        
+        # 1. Cube mask overlay (Cyan)
+        m_c = cube_mask > 0
+        if np.any(m_c):
+            cube_col = np.array([80, 200, 255], dtype=np.float32)
+            masked_frame[m_c] = masked_frame[m_c] * 0.55 + cube_col * 0.45
+            
+        # 2. Gripper mask overlay (Neon Green)
+        m_g = gripper_mask > 0
+        if np.any(m_g):
+            gripper_col = np.array([80, 255, 140], dtype=np.float32)
+            masked_frame[m_g] = masked_frame[m_g] * 0.55 + gripper_col * 0.45
+            
+        # 3. Goal mask overlay (Salmon Red)
+        m_t = target_mask > 0
+        if np.any(m_t):
+            goal_col = np.array([255, 100, 80], dtype=np.float32)
+            masked_frame[m_t] = masked_frame[m_t] * 0.70 + goal_col * 0.30
+            
+        frame = np.clip(masked_frame, 0, 255).astype(np.uint8)
+        
         # ── HUD Overlay ───────────────────────────────────────────────
         hud_height = 36
         overlay = frame.copy()
