@@ -1,3 +1,6 @@
 [submodule "third_party/slotformer"]
 	path = third_party/slotformer
 	url = https://github.com/pairlab/SlotFormer.git
+[submodule "third_party/leworldmodel"]
+	path = third_party/leworldmodel
+	url = https://github.com/lucas-maes/le-wm
