@@ -1216,9 +1216,8 @@ class OGBenchReplayer(BaseReplayer):
                     orig_pos[gid] = model.geom_pos[gid].copy()
                     model.geom_pos[gid][2] += 0.001  # +1mm Z-bias to resolve floor Z-fighting
                 for gid in hide_gids:
-                    if gid not in orig_pos:
-                        orig_pos[gid] = model.geom_pos[gid].copy()
-                    model.geom_pos[gid] = [999.0, 999.0, 999.0]
+                    saved_rgba[gid] = float(model.geom(gid).rgba[3])
+                    model.geom(gid).rgba[3] = 0.0  # Set alpha=0.0 to hide non-target geoms cleanly
 
                 try:
                     renderer.update_scene(data, camera="front_pixels")
