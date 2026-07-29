@@ -164,9 +164,9 @@ def main():
         data.mocap_pos[mocap_id] = target_pos
         data.mocap_quat[mocap_id] = target_quat
 
-        # Hide the target block visual indicator (rgba[3] = 0.0) from the main RGB frame
+        # Restore goal block visual indicator (rgba[3] = 0.2) in main RGB frame
         for gid in env._cube_target_geom_ids_list[env._target_block]:
-            model.geom(gid).rgba[3] = 0.0
+            model.geom(gid).rgba[3] = 0.2
 
         mujoco.mj_forward(model, data)
         
@@ -227,16 +227,9 @@ def main():
         right_pad_ft_mags.append(right_frict_mag)
         
         # ── Draw forces on frame ──────────────────────────────────────
-        # Render the RGB frame using MuJoCo Renderer so the target block is visible
+        # Render the RGB frame using MuJoCo Renderer so the goal block is visible
         renderer_rgb.update_scene(data, camera="front_pixels")
         frame = renderer_rgb.render().copy()
-        
-        # Draw goal position marker (red diamond)
-        goal_px = project_3d_to_2d(target_pos, model, data, "front_pixels", W, H)
-        if goal_px is not None:
-            gx, gy = goal_px
-            cv2.drawMarker(frame, (gx, gy), (0, 0, 255), cv2.MARKER_DIAMOND, 16, 2, cv2.LINE_AA)
-            cv2.putText(frame, "Goal", (gx + 9, gy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (0, 0, 255), 1, cv2.LINE_AA)
         
         if len(contact_pts_list) > 0:
             # Average contact position in world space
@@ -264,7 +257,6 @@ def main():
                     cv2.arrowedLine(frame, px_contact, px_frict_end, (0, 165, 255), 2, cv2.LINE_AA, 0, 0.3)
                     
         # ── Render and record segmentation masks ──────────────────────
-        # Goal mask is virtual and static across the whole trajectory
         target_mask = static_target_mask
         
         # Dynamic category segmentation (gripper and cube)
@@ -296,14 +288,13 @@ def main():
         target_masks.append(target_mask)
         gripper_masks.append(gripper_mask)
         
-        # Build 4-panel segmentation visualization (original | cube | gripper | target)
+        # Build 3-panel segmentation visualization (Original | Cube | Gripper)
         H_f, W_f = frame.shape[:2]
         cube_vis    = np.zeros((H_f, W_f, 3), dtype=np.uint8); cube_vis[cube_mask > 0] = (80, 200, 255)
         gripper_vis = np.zeros((H_f, W_f, 3), dtype=np.uint8); gripper_vis[gripper_mask > 0] = (80, 255, 140)
-        target_vis  = np.zeros((H_f, W_f, 3), dtype=np.uint8); target_vis[target_mask > 0] = (255, 100, 80)
-        for vis_img, lbl in [(frame.copy(), "Original"), (cube_vis, cube_lbl), (gripper_vis, "Gripper"), (target_vis, "Goal")]:
+        for vis_img, lbl in [(frame.copy(), "Original"), (cube_vis, cube_lbl), (gripper_vis, "Gripper")]:
             cv2.putText(vis_img, lbl, (4, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255,255,255), 1, cv2.LINE_AA)
-        seg_panel = np.concatenate([frame.copy(), cube_vis, gripper_vis, target_vis], axis=1)
+        seg_panel = np.concatenate([frame.copy(), cube_vis, gripper_vis], axis=1)
         seg_vis_frames.append(seg_panel)
         
         # ── HUD Overlay ───────────────────────────────────────────────
