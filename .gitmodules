@@ -4,3 +4,6 @@
 [submodule "third_party/leworldmodel"]
 	path = third_party/leworldmodel
 	url = https://github.com/lucas-maes/le-wm
+[submodule "third_party/Seer"]
+	path = third_party/Seer
+	url = https://github.com/InternRobotics/Seer.git

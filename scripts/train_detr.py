@@ -32,40 +32,13 @@ from src.models.detr import (
     box_cxcywh_to_xyxy,
     masks_to_boxes_and_labels
 )
-
-# ── Dynamic Dataset Loader ───────────────────────────────────────────────────
-def get_dataset(dataset_name, h5_path, split, resolution, n_sample_frames, frame_offset, train_frac):
-    if dataset_name == 'pusht':
-        from src.datasets.pusht import PushTMaskHDF5Dataset
-        return PushTMaskHDF5Dataset(
-            h5_path=h5_path,
-            split=split,
-            resolution=resolution,
-            n_sample_frames=n_sample_frames,
-            frame_offset=frame_offset,
-            train_frac=train_frac
-        )
-    elif dataset_name == 'ogbench':
-        from src.datasets.ogbench import OGBenchCubeDataset
-        return OGBenchCubeDataset(
-            data_path=h5_path,
-            split=split,
-            resolution=resolution,
-            n_sample_frames=n_sample_frames
-        )
-    elif dataset_name == 'libero':
-        from src.datasets.libero import LiberoDataset
-        return LiberoDataset(
-            data_path=h5_path,
-            split=split,
-            resolution=resolution,
-            n_sample_frames=n_sample_frames
-        )
-    else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
+from src.utils.data_utils import get_dataset
+from src.utils.training_utils import cosine_anneal_with_warmup, set_seed, get_device
+from src.training.trainer import BaseTrainer
 
 
 # ── Box Processing & Visualization Helpers ────────────────────────────────────
+
 def draw_box(img, box_xyxy, color, thickness=1):
     H, W = img.shape[:2]
     x1, y1, x2, y2 = box_xyxy.tolist()
@@ -141,15 +114,8 @@ def visualize_detr(model, val_ds, n_samples, device, writer, epoch, cfg):
     model.train()
 
 
-# ── Training Helpers ──────────────────────────────────────────────────────────
-def cosine_anneal_with_warmup(step, total_steps, warmup_steps, lr, min_lr):
-    if step < warmup_steps:
-        return lr * step / max(1, warmup_steps)
-    progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
-    return min_lr + 0.5 * (lr - min_lr) * (1 + math.cos(math.pi * progress))
-
-
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='pusht', choices=['pusht', 'ogbench', 'libero'],

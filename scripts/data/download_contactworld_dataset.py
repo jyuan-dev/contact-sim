@@ -9,7 +9,8 @@ import os
 import sys
 import time
 
-# Enable high-performance Rust multi-thread transfer if installed
+# Enable high-performance transfers
+os.environ["HF_XET_HIGH_PERFORMANCE"] = "1"
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 try:
@@ -55,7 +56,6 @@ def main():
             repo_type="dataset",
             local_dir=args.target_dir,
             max_workers=args.max_workers,
-            resume_download=True,
         )
         elapsed = time.time() - start_time
         print(f"✅ Success! Dataset downloaded to {download_path} in {elapsed:.2f}s")

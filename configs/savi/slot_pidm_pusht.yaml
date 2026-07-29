@@ -1,0 +1,30 @@
+# Slot-PIDM Configuration on PushT
+dataset:
+  name: "pusht"
+  h5_path: "scratch/pusht_expert_train_test_enriched.h5"
+  resolution: [64, 64]
+  train_frac: 0.9
+  n_sample_frames: 6
+  frame_offset: 1
+
+model:
+  d_model: 128
+  action_dim: 2
+  k_slots: 4
+  num_heads: 4
+  num_iterations: 2
+  weight_action_loss: 1.0
+  weight_slot_loss: 1.0
+  weight_sigreg_loss: 0.01
+
+training:
+  batch_size: 64
+  lr: 0.001
+  weight_decay: 0.0001
+  max_epochs: 20
+  warmup_epochs: 2
+  seed: 42
+  num_workers: 4
+  log_interval: 10
+  checkpoint_interval: 5
+  save_dir: "scratch/checkpoints/slot_pidm_pusht"
