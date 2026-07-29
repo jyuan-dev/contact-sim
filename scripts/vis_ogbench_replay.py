@@ -288,13 +288,14 @@ def main():
         target_masks.append(target_mask)
         gripper_masks.append(gripper_mask)
         
-        # Build 3-panel segmentation visualization (Original | Cube | Gripper)
+        # Build 4-panel segmentation visualization (Original | Cube | Gripper | Goal)
         H_f, W_f = frame.shape[:2]
         cube_vis    = np.zeros((H_f, W_f, 3), dtype=np.uint8); cube_vis[cube_mask > 0] = (80, 200, 255)
         gripper_vis = np.zeros((H_f, W_f, 3), dtype=np.uint8); gripper_vis[gripper_mask > 0] = (80, 255, 140)
-        for vis_img, lbl in [(frame.copy(), "Original"), (cube_vis, cube_lbl), (gripper_vis, "Gripper")]:
+        target_vis  = np.zeros((H_f, W_f, 3), dtype=np.uint8); target_vis[target_mask > 0] = (255, 100, 80)
+        for vis_img, lbl in [(frame.copy(), "Original"), (cube_vis, cube_lbl), (gripper_vis, "Gripper"), (target_vis, "Goal")]:
             cv2.putText(vis_img, lbl, (4, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255,255,255), 1, cv2.LINE_AA)
-        seg_panel = np.concatenate([frame.copy(), cube_vis, gripper_vis], axis=1)
+        seg_panel = np.concatenate([frame.copy(), cube_vis, gripper_vis, target_vis], axis=1)
         seg_vis_frames.append(seg_panel)
         
         # ── HUD Overlay ───────────────────────────────────────────────
