@@ -164,9 +164,9 @@ def main():
         data.mocap_pos[mocap_id] = target_pos
         data.mocap_quat[mocap_id] = target_quat
 
-        # Make the target block visual indicator visible
+        # Hide the target block visual indicator (rgba[3] = 0.0) from the main RGB frame
         for gid in env._cube_target_geom_ids_list[env._target_block]:
-            model.geom(gid).rgba[3] = 0.2
+            model.geom(gid).rgba[3] = 0.0
 
         mujoco.mj_forward(model, data)
         
