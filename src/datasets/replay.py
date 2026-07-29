@@ -1089,7 +1089,11 @@ class OGBenchReplayer(BaseReplayer):
         Forces target geoms to be 100% opaque (rgba[3] = 1.0) and hides
         *hide_geom_ids* (rgba[3] = 0.0) during the render pass to eliminate
         subpixel edge bleeding, alpha blending, and Z-buffer misclassifications.
-        Restores original RGBA values after rendering.
+
+        Z-FIGHTING FIX:
+        When objects rest on the floor, their bottom face lies at Z=0, coplanar with the floor.
+        To prevent ground-level Z-fighting and contact penetration artifacts in OpenGL z-buffer
+        rendering, a tiny +1mm (+0.001m) Z-bias is temporarily applied during mask rendering.
 
         Returns
         -------
@@ -1098,12 +1102,15 @@ class OGBenchReplayer(BaseReplayer):
         import mujoco
 
         saved_rgba = {}
+        saved_pos = {}
         hide_geom_ids = hide_geom_ids or set()
 
-        # Save and set target geom alpha to opaque (1.0)
+        # Save and set target geom alpha to opaque (1.0), with +1mm Z-bias to fix ground Z-fighting
         for gid in target_geom_ids:
             saved_rgba[gid] = list(model.geom(gid).rgba)
+            saved_pos[gid] = model.geom_pos[gid].copy()
             model.geom(gid).rgba[3] = 1.0
+            model.geom_pos[gid][2] += 0.001  # +1mm Z-bias
 
         # Save and hide occluder / conflicting geoms (0.0)
         for gid in hide_geom_ids:
@@ -1122,9 +1129,11 @@ class OGBenchReplayer(BaseReplayer):
             if _own_renderer:
                 renderer.close()
         finally:
-            # Restore all modified geom RGBA values
+            # Restore all modified geom RGBA and position values
             for gid, rgba in saved_rgba.items():
                 model.geom(gid).rgba = rgba
+            for gid, pos in saved_pos.items():
+                model.geom_pos[gid] = pos
 
         # Build clean binary mask
         geom_map = seg[:, :, 0]
@@ -1144,6 +1153,11 @@ class OGBenchReplayer(BaseReplayer):
         For each category, renders its isolated segmentation map and depth map.
         Per pixel, the category with the closest camera depth (smallest z-value > 0)
         wins the pixel ownership.
+
+        Z-FIGHTING FIX:
+        When objects rest on the floor, Z_bottom == Z_floor == 0.0m (or slight solver penetration),
+        causing OpenGL z-buffer Z-fighting at ground contact boundaries. We apply a +1mm (+0.001m) Z-bias
+        to target objects during mask rendering to lift bottom surfaces infinitesimally above the floor.
 
         Parameters
         ----------
@@ -1176,8 +1190,11 @@ class OGBenchReplayer(BaseReplayer):
                 for gid in target_gids:
                     saved_rgba[gid] = float(model.geom(gid).rgba[3])
                     model.geom(gid).rgba[3] = 1.0
-                for gid in hide_gids:
                     orig_pos[gid] = model.geom_pos[gid].copy()
+                    model.geom_pos[gid][2] += 0.001  # +1mm Z-bias to resolve floor Z-fighting
+                for gid in hide_gids:
+                    if gid not in orig_pos:
+                        orig_pos[gid] = model.geom_pos[gid].copy()
                     model.geom_pos[gid] = [999.0, 999.0, 999.0]
 
                 try:
