@@ -973,12 +973,20 @@ class OGBenchReplayer(BaseReplayer):
 
     # ── MuJoCo helpers ────────────────────────────────────────────────────
 
-    def _find_gripper_geom_ids(self, model) -> set[int]:
-        """Return the set of MuJoCo geom IDs that belong to the gripper/arm."""
+    def _find_gripper_geom_ids(self, model, gripper_only: bool = False) -> set[int]:
+        """Return the set of MuJoCo geom IDs that belong to the gripper/arm.
+        
+        Parameters
+        ----------
+        gripper_only : bool, default False
+            If True, matches only end-effector gripper geoms (robotiq, finger, pad, gripper),
+            excluding upper arm/forearm links ('ur5e').
+        """
         ids: set[int] = set()
+        fragments = ("robotiq", "finger", "gripper", "hand", "pad") if gripper_only else self._GRIPPER_GEOM_FRAGMENTS
         for g_id in range(model.ngeom):
             name = model.geom(g_id).name.lower()
-            if any(frag in name for frag in self._GRIPPER_GEOM_FRAGMENTS):
+            if any(frag in name for frag in fragments):
                 ids.add(g_id)
         return ids
 
@@ -1083,6 +1091,7 @@ class OGBenchReplayer(BaseReplayer):
         target_geom_ids: set[int],
         hide_geom_ids: set[int] | None = None,
         renderer=None,
+        clean_edges: bool = True,
     ) -> np.ndarray:
         """Render an isolated binary mask for *target_geom_ids*.
 
@@ -1140,6 +1149,12 @@ class OGBenchReplayer(BaseReplayer):
         mask = np.zeros((height, width), dtype=np.uint8)
         for gid in target_geom_ids:
             mask[geom_map == gid] = 255
+
+        if clean_edges:
+            import cv2
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         return mask
 
     @staticmethod
@@ -1147,6 +1162,7 @@ class OGBenchReplayer(BaseReplayer):
         env, model, data, height: int, width: int,
         category_geom_dict: dict[str, set[int]],
         renderer=None,
+        clean_edges: bool = True,
     ) -> dict[str, np.ndarray]:
         """Segment multiple categories in isolation and resolve pixel ownership via 3D depth testing.
 
@@ -1154,16 +1170,20 @@ class OGBenchReplayer(BaseReplayer):
         Per pixel, the category with the closest camera depth (smallest z-value > 0)
         wins the pixel ownership.
 
-        Z-FIGHTING FIX:
+        Z-FIGHTING & NOISE EDGE FIX:
         When objects rest on the floor, Z_bottom == Z_floor == 0.0m (or slight solver penetration),
         causing OpenGL z-buffer Z-fighting at ground contact boundaries. We apply a +1mm (+0.001m) Z-bias
         to target objects during mask rendering to lift bottom surfaces infinitesimally above the floor.
+        Additionally, morphological opening and closing (clean_edges=True) removes isolated single-pixel
+        rasterization specks and seals micro-gaps along object contours.
 
         Parameters
         ----------
         category_geom_dict : dict[str, set[int]]
             Mapping of category names (e.g. 'cube', 'gripper', 'target') to geom ID sets.
         renderer : mujoco.Renderer, optional
+        clean_edges : bool, default True
+            Apply 3x3 morphological opening and closing to remove edge noise specks and pinholes.
 
         Returns
         -------
@@ -1226,7 +1246,14 @@ class OGBenchReplayer(BaseReplayer):
         masks = {}
         for idx, cat in enumerate(categories):
             m = (min_idx == idx) & (min_val < np.inf)
-            masks[cat] = m.astype(np.uint8) * 255
+            mask_uint8 = m.astype(np.uint8) * 255
+            if clean_edges:
+                import cv2
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                # MORPH_OPEN removes isolated noise specks; MORPH_CLOSE seals internal micro-gaps
+                m_open = cv2.morphologyEx(mask_uint8, cv2.MORPH_OPEN, kernel)
+                mask_uint8 = cv2.morphologyEx(m_open, cv2.MORPH_CLOSE, kernel)
+            masks[cat] = mask_uint8
         return masks
 
     @staticmethod
