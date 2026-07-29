@@ -1091,7 +1091,7 @@ class OGBenchReplayer(BaseReplayer):
         target_geom_ids: set[int],
         hide_geom_ids: set[int] | None = None,
         renderer=None,
-        clean_edges: bool = True,
+        clean_edges: bool = False,
     ) -> np.ndarray:
         """Render an isolated binary mask for *target_geom_ids*.
 
@@ -1103,6 +1103,11 @@ class OGBenchReplayer(BaseReplayer):
         When objects rest on the floor, their bottom face lies at Z=0, coplanar with the floor.
         To prevent ground-level Z-fighting and contact penetration artifacts in OpenGL z-buffer
         rendering, a tiny +1mm (+0.001m) Z-bias is temporarily applied during mask rendering.
+
+        Parameters
+        ----------
+        clean_edges : bool, default False
+            Optional 3x3 morphological opening and closing filter. Off by default to preserve raw OpenGL rendering.
 
         Returns
         -------
@@ -1162,7 +1167,7 @@ class OGBenchReplayer(BaseReplayer):
         env, model, data, height: int, width: int,
         category_geom_dict: dict[str, set[int]],
         renderer=None,
-        clean_edges: bool = True,
+        clean_edges: bool = False,
     ) -> dict[str, np.ndarray]:
         """Segment multiple categories in isolation and resolve pixel ownership via 3D depth testing.
 
@@ -1170,20 +1175,18 @@ class OGBenchReplayer(BaseReplayer):
         Per pixel, the category with the closest camera depth (smallest z-value > 0)
         wins the pixel ownership.
 
-        Z-FIGHTING & NOISE EDGE FIX:
+        Z-FIGHTING FIX:
         When objects rest on the floor, Z_bottom == Z_floor == 0.0m (or slight solver penetration),
         causing OpenGL z-buffer Z-fighting at ground contact boundaries. We apply a +1mm (+0.001m) Z-bias
         to target objects during mask rendering to lift bottom surfaces infinitesimally above the floor.
-        Additionally, morphological opening and closing (clean_edges=True) removes isolated single-pixel
-        rasterization specks and seals micro-gaps along object contours.
 
         Parameters
         ----------
         category_geom_dict : dict[str, set[int]]
             Mapping of category names (e.g. 'cube', 'gripper', 'target') to geom ID sets.
         renderer : mujoco.Renderer, optional
-        clean_edges : bool, default True
-            Apply 3x3 morphological opening and closing to remove edge noise specks and pinholes.
+        clean_edges : bool, default False
+            Optional 3x3 morphological opening and closing filter. Off by default to preserve raw OpenGL rendering.
 
         Returns
         -------
