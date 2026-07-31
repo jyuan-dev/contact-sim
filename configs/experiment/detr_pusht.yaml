@@ -1,0 +1,10 @@
+# @package _global_
+
+defaults:
+  - override /model: detr
+  - override /dataset: pusht
+
+exp_name: "detr_pusht"
+epochs: 15
+batch_size: 32
+lr: 1e-4

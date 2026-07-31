@@ -1,17 +1,9 @@
-# SAVi / StoSAVi PushT Baseline Configuration
+name: "savi"
+type: "savi"
 
-model:
-  name: "savi"
-  type: "savi"
-
-# Data
-h5_path: "/home/jyuan/.stable-wm/pusht_expert_train_enriched.h5"
 resolution: [64, 64]
 n_sample_frames: 6
-frame_offset: 1
-train_frac: 0.8
 
-# Model Architectural Specifications
 slot_dict:
   num_slots: 4
   slot_size: 64
@@ -44,14 +36,6 @@ loss_dict:
   use_post_recon_loss: true
   kld_method: "var-0.01"
 
-# Training Hyperparameters
-epochs: 8
-batch_size: 16
-num_workers: 4
-lr: 0.0002
-clip_grad: 0.05
-
-# Loss Weights
 weight_dict:
   recon: 1.0
   mask: 1.0

@@ -1,0 +1,7 @@
+name: "pusht"
+type: "pusht"
+h5_path: "/home/jyuan/.stable-wm/pusht_expert_train_enriched.h5"
+resolution: [64, 64]
+n_sample_frames: 6
+frame_offset: 1
+train_frac: 0.8

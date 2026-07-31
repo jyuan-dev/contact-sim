@@ -1,0 +1,10 @@
+# @package _global_
+
+defaults:
+  - override /model: savi
+  - override /dataset: gridshapes
+
+exp_name: "savi_gridshapes"
+epochs: 10
+batch_size: 16
+lr: 2e-4

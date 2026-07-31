@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Unified Baseline Evaluation CLI Entrypoint for Contact-Sim / Slot-Worldmodel.
+Unified Baseline Evaluation CLI Entrypoint powered by Hydra.
 
 Usage:
-  python scripts/eval.py --config configs/savi/pusht.yaml --ckpt /home/jyuan/.stable-wm/savi_mask_detr/savi_epoch_8.pt
-  python scripts/eval.py --config configs/detr/pusht.yaml --ckpt /home/jyuan/.stable-wm/detr_pusht/detr_final.pt
+  python scripts/eval.py model=savi dataset=pusht ckpt_path=/home/jyuan/.stable-wm/savi_mask_detr/savi_epoch_8.pt
+  python scripts/eval.py model=detr dataset=pusht ckpt_path=/home/jyuan/.stable-wm/detr_pusht/detr_final.pt
 """
 
 import sys
@@ -19,6 +19,8 @@ import torch
 import torch.nn.functional as F
 import cv2
 import imageio
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_SILENT'] = 'true'
@@ -46,37 +48,29 @@ GT_COLORS_RGB = {
 }
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Unified Baseline Evaluator")
-    parser.add_argument("--config", type=str, required=True, help="Path to experiment YAML config file")
-    parser.add_argument("--ckpt", type=str, required=True, help="Path to model checkpoint (.pt / .ckpt)")
-    parser.add_argument("--ep_idx", type=int, default=6, help="Validation episode index to evaluate")
-    return parser.parse_args()
-
-
-def main():
-    args = parse_args()
-    print("======================================================================")
-    print(f"               Unified Baseline Evaluator ({args.config})            ")
-    print("======================================================================")
-
-    with open(args.config, 'r') as f:
-        cfg = yaml.safe_load(f)
+@hydra.main(config_path="../configs", config_name="config", version_base=None)
+def main(cfg: DictConfig):
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+    ckpt_path = cfg.get('ckpt_path', None) or cfg.get('ckpt', None) or "/home/jyuan/.stable-wm/savi_mask_detr/savi_epoch_8.pt"
+    ep_idx = cfg.get('ep_idx', 6)
+
+    model_name = cfg.model.name
+    dataset_name = cfg.dataset.name
+
+    print("======================================================================")
+    print(f"            Hydra Baseline Evaluator ({model_name} / {dataset_name})  ")
+    print("======================================================================")
     print(f"Device: {device}")
-    print(f"Loading Checkpoint: {args.ckpt}")
+    print(f"Loading Checkpoint: {ckpt_path}")
 
     # 1. Build Model via Factory
-    model = build_model(cfg).to(device)
+    model = build_model(cfg_dict).to(device)
 
-    ckpt_data = torch.load(args.ckpt, map_location=device)
-
-    if hasattr(model, 'model'):
-        target_model = model.model
-    else:
-        target_model = model
-
+    ckpt_data = torch.load(ckpt_path, map_location=device)
+    target_model = model.model if hasattr(model, 'model') else model
     state = ckpt_data.get('model', ckpt_data.get('model_state', ckpt_data))
     state = {k.replace('model.', '').replace('module.', ''): v for k, v in state.items()}
     target_model.load_state_dict(state)
@@ -85,24 +79,22 @@ def main():
     print("Model loaded successfully into eval mode!")
 
     # 2. Extract Episode Data
-    h5_path = cfg.get('h5_path', '/home/jyuan/.stable-wm/pusht_expert_train_enriched.h5')
+    h5_path = cfg.dataset.get('h5_path', '/home/jyuan/.stable-wm/pusht_expert_train_enriched.h5')
     if not os.path.exists(h5_path):
         h5_path = '/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5'
 
     with h5py.File(h5_path, 'r') as f:
         ep_lens = np.array(f['ep_len'])
         ep_offs = np.array(f['ep_offset'])
-
-        offset = ep_offs[args.ep_idx]
-        length = ep_lens[args.ep_idx]
-
+        offset = ep_offs[ep_idx]
+        length = ep_lens[ep_idx]
         pixels = np.array(f['pixels'][offset : offset + length])
         b_masks = np.array(f['block_masks'][offset : offset + length]) > 0
         a_masks = np.array(f['agent_masks'][offset : offset + length]) > 0
         g_masks = np.array(f['goal_masks'][offset : offset + length]) > 0
 
     T = length
-    print(f"Loaded validation episode index {args.ep_idx}: {T} frames.")
+    print(f"Loaded validation episode index {ep_idx}: {T} frames.")
 
     imgs_np = pixels.transpose(0, 3, 1, 2) if (pixels.ndim == 4 and pixels.shape[-1] == 3) else pixels
     imgs_torch = torch.tensor(imgs_np, dtype=torch.float32, device=device) / 255.0
@@ -119,7 +111,6 @@ def main():
     if pred_masks is not None:
         pred_masks_np = pred_masks[0].cpu().numpy() # [T, K, H, W]
     else:
-        # Fallback dummy mask for pure box models
         pred_masks_np = np.zeros((T, 4, 64, 64), dtype=np.float32)
 
     # 4. Evaluate Metrics

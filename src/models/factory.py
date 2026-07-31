@@ -108,13 +108,25 @@ def build_model(cfg):
     Constructs a baseline model wrapped in standardized output contract.
 
     Args:
-        cfg (dict): Configuration dictionary loaded from YAML.
+        cfg (dict or DictConfig): Configuration loaded via Hydra / OmegaConf or YAML.
 
     Returns:
         nn.Module: Standardized PyTorch model wrapper.
     """
+    try:
+        from omegaconf import OmegaConf, DictConfig
+        if isinstance(cfg, DictConfig):
+            cfg = OmegaConf.to_container(cfg, resolve=True)
+    except ImportError:
+        pass
+
     model_cfg = cfg.get('model', cfg)
-    model_type = model_cfg.get('type', model_cfg.get('name', 'detr')).lower()
+    if isinstance(cfg, dict):
+        merged_cfg = {**cfg, **model_cfg}
+    else:
+        merged_cfg = model_cfg
+
+    model_type = merged_cfg.get('type', merged_cfg.get('name', 'detr')).lower()
 
     if 'detr' in model_type:
         backbone = ResNetBackbone(train_backbone=model_cfg.get('train_backbone', False))
@@ -134,17 +146,17 @@ def build_model(cfg):
         return StandardizedDETRWrapper(base_model)
 
     elif 'savi' in model_type or 'slot' in model_type:
-        res = tuple(cfg.get('resolution', [64, 64]))
-        clip_len = cfg.get('n_sample_frames', cfg.get('clip_len', 16))
+        res = tuple(merged_cfg.get('resolution', [64, 64]))
+        clip_len = merged_cfg.get('n_sample_frames', merged_cfg.get('clip_len', 16))
         
         base_model = build_savi_model(
             resolution=res,
             clip_len=clip_len,
-            slot_dict=cfg.get('slot_dict', {}),
-            enc_dict=cfg.get('enc_dict', {}),
-            dec_dict=cfg.get('dec_dict', {}),
-            pred_dict=cfg.get('pred_dict', {}),
-            loss_dict=cfg.get('loss_dict', None)
+            slot_dict=merged_cfg.get('slot_dict', {}),
+            enc_dict=merged_cfg.get('enc_dict', {}),
+            dec_dict=merged_cfg.get('dec_dict', {}),
+            pred_dict=merged_cfg.get('pred_dict', {}),
+            loss_dict=merged_cfg.get('loss_dict', None)
         )
         return StandardizedSAViWrapper(base_model)
 

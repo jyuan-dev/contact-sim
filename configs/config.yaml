@@ -1,0 +1,15 @@
+defaults:
+  - model: savi
+  - dataset: pusht
+  - optional experiment: null
+  - _self_
+
+exp_name: ${model.name}_${dataset.name}
+seed: 42
+epochs: 8
+batch_size: 16
+num_workers: 4
+lr: 2e-4
+dry_run: false
+ckpt_path: null
+ep_idx: 6

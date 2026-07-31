@@ -1,0 +1,5 @@
+name: "sketchy"
+type: "sketchy"
+datapath: "/home/jyuan/.stable-wm/sketchy"
+resolution: [64, 64]
+n_sample_frames: 16

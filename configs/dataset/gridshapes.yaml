@@ -1,0 +1,7 @@
+name: "gridshapes"
+type: "gridshapes"
+resolution: [64, 64]
+n_sample_frames: 16
+num_objects: 3
+train_samples: 1000
+val_samples: 200
