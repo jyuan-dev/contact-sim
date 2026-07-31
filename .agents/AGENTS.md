@@ -16,7 +16,7 @@
 - **Core Modules**: Keep reusable neural network architectures and dataset classes modular inside `src/` (e.g. `src/models/`, `src/datasets/`).
 - **Configurations**: Store experiment hyperparameters exclusively in YAML files under `configs/<model_family>/`.
 - **Scripts**: Entrypoint training and validation scripts belong in `scripts/` or `eval/`.
-- **Third-Party Submodules**: External repositories and submodules belong in `third_party/`.
+- **Third-Party Submodules**: External repositories and submodules belong in `third_party/`. Never modify or edit third-party submodule code inside `third_party/`; implement all custom wrappers, extensions, and adapters in `src/` or `scripts/`.
 
 ## Logging & Experiment Tracking
 - **TensorBoard**: Log training metrics, losses, and learning rates using TensorBoard to `scratch/checkpoints/<experiment_name>/tb_logs`.
