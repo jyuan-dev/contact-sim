@@ -20,6 +20,53 @@ for p in [REPO_ROOT, SLOTFORMER, os.path.join(SLOTFORMER, 'slotformer', 'base_sl
 from slotformer.base_slots.models.savi import StoSAVi
 
 
+class StoSAViWithTinyViT(StoSAVi):
+    """
+    Subclass of StoSAVi that uses ImageNet-pretrained TinyViT (from timm) as the encoder,
+    without modifying third-party submodules.
+    """
+    def _build_encoder(self):
+        from src.models.tiny_vit_encoder import TinyViTEncoder
+        model_name = self.enc_dict.get('model_name', 'tiny_vit_5m_224')
+        pretrained = self.enc_dict.get('pretrained', True)
+        self.encoder = TinyViTEncoder(
+            model_name=model_name,
+            pretrained=pretrained,
+            out_channels=self.enc_out_channels
+        )
+        self.encoder_pos_embedding = nn.Identity()
+        self.encoder_out_layer = nn.Identity()
+
+    def _get_encoder_out(self, img):
+        return self.encoder(img).type(self.dtype)
+
+
+def build_savi_model(resolution, clip_len, slot_dict, enc_dict, dec_dict, pred_dict, loss_dict=None):
+    """
+    Factory function building StoSAVi with either CNN or TinyViT encoder.
+    """
+    if enc_dict.get('encoder_type', 'cnn') == 'tinyvit':
+        return StoSAViWithTinyViT(
+            resolution=resolution,
+            clip_len=clip_len,
+            slot_dict=slot_dict,
+            enc_dict=enc_dict,
+            dec_dict=dec_dict,
+            pred_dict=pred_dict,
+            loss_dict=loss_dict
+        )
+    return StoSAVi(
+        resolution=resolution,
+        clip_len=clip_len,
+        slot_dict=slot_dict,
+        enc_dict=enc_dict,
+        dec_dict=dec_dict,
+        pred_dict=pred_dict,
+        loss_dict=loss_dict
+    )
+
+
+
 # ── 2. DETR Hungarian Matcher for Slot Masks ──────────────────────────────────
 class DETRHungarianMatcher(nn.Module):
     """

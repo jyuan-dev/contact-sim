@@ -1,0 +1,64 @@
+# Data
+h5_path: "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5"
+resolution: [64, 64]
+n_sample_frames: 6
+frame_offset: 1
+train_frac: 0.8
+
+# Model dicts
+slot_dict:
+  num_slots: 3
+  slot_size: 64
+  slot_mlp_size: 128
+  num_iterations: 2
+  kernel_mlp: false
+
+enc_dict:
+  encoder_type: "tinyvit"
+  model_name: "tiny_vit_5m_224"
+  pretrained: true
+  enc_out_channels: 32
+
+dec_dict:
+  dec_channels: [64, 16, 16, 16, 16]
+  dec_resolution: [8, 8]
+  dec_ks: 5
+  dec_norm: ""
+
+pred_dict:
+  pred_type: "mlp"
+  pred_rnn: false
+  pred_norm_first: true
+  pred_num_layers: 2
+  pred_num_heads: 4
+  pred_ffn_dim: 256
+  pred_sg_every: null
+
+# Fully Self-Supervised Loss Configs
+loss_dict:
+  use_mask_loss: false # Fully self-supervised (no GT mask supervision)
+  use_post_recon_loss: true
+  kld_method: "var-0.01" # SAVi Paper: prior Gaussian variance = 0.01
+
+# Loss balancing weights (matching SAVi & LeWM original papers)
+recon_loss_w: 1.0 # SAVi Paper: 1.0
+kld_loss_w: 0.0001 # SAVi Paper: 1e-4
+sigreg_loss_w: 0.1 # LeWM Paper: 0.1
+contrast_loss_w: 0.05 # Temporal Slot Contrastive InfoNCE weight
+
+# Training
+max_epochs: 8
+batch_size: 32 # Set batch_size=32 for 5.2M ViT backbone with 224x224 interpolation (192 frames/step)
+
+lr: 2.0e-4
+warmup_steps: 1000
+clip_grad: 1.0
+ckpt_dir: "scratch/checkpoints/savi_tinyvit"
+
+# Early Stopping & Validation Configs
+early_stopping:
+  enabled: true
+  patience: 3
+  min_delta: 0.0001
+  val_every_n_steps: 500
+  max_val_batches: 50

@@ -30,8 +30,14 @@ if REPO_ROOT not in sys.path:
 from src.utils.data_utils import get_dataset, find_dataset_path
 from src.utils.training_utils import cosine_anneal_with_warmup, set_seed, get_device
 from src.training.trainer import BaseTrainer
-from src.models.slot_attention import StoSAVi, DETRHungarianMatcher, DETRMaskLoss
+from src.models.slot_attention import StoSAVi, DETRHungarianMatcher, DETRMaskLoss, build_savi_model
+
 from src.models.slot_pidm import SlotPIDMAgent
+from src.losses.sigreg import SIGRegLoss
+from src.losses.contrastive import TemporalSlotContrastiveLoss
+from src.metrics.eval_metrics import (
+    compute_psnr, compute_ssim, compute_fg_ari, compute_latent_std, compute_sigreg_stat
+)
 
 
 # ── Slot-PIDM Trajectory Wrapper ──────────────────────────────────────────────
@@ -105,6 +111,34 @@ class SyntheticSlotDataset(Dataset):
             }
 
 
+# ── Early Stopping Helper ──────────────────────────────────────────────────────
+class EarlyStopping:
+    def __init__(self, patience=3, min_delta=1e-4, mode='min'):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.mode = mode
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+
+    def __call__(self, val_metric):
+        score = -val_metric if self.mode == 'min' else val_metric
+        if self.best_score is None:
+            self.best_score = score
+            return True
+        elif score < self.best_score + self.min_delta:
+            self.counter += 1
+            best_val = -self.best_score if self.mode == 'min' else self.best_score
+            print(f"[EarlyStopping] Patience counter: {self.counter}/{self.patience} (Best val loss: {best_val:.4f})")
+            if self.counter >= self.patience:
+                self.early_stop = True
+            return False
+        else:
+            self.best_score = score
+            self.counter = 0
+            return True
+
+
 # ── Train StoSAVi (Stage 1) ───────────────────────────────────────────────────
 def train_savi(config, args, device):
     save_dir = config.get('ckpt_dir', 'scratch/checkpoints/savi')
@@ -119,15 +153,18 @@ def train_savi(config, args, device):
 
     if os.path.exists(h5_path):
         train_ds = get_dataset(dataset_name, h5_path, 'train', resolution, n_sample_frames, frame_offset, train_frac)
+        val_ds = get_dataset(dataset_name, h5_path, 'val', resolution, n_sample_frames, frame_offset, train_frac)
     else:
         print(f"[Train StoSAVi] Dataset path '{h5_path}' not found. Using synthetic dataset for dry run.")
         train_ds = SyntheticSlotDataset(mode='savi', res=resolution[0], num_frames=n_sample_frames)
+        val_ds = SyntheticSlotDataset(mode='savi', res=resolution[0], num_frames=n_sample_frames)
 
     batch_size = config.get('batch_size', 32)
     num_workers = config.get('num_workers', 4)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=(device.type=='cuda'))
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=(device.type=='cuda'))
 
-    model = StoSAVi(
+    model = build_savi_model(
         resolution=resolution,
         clip_len=n_sample_frames,
         slot_dict=config['slot_dict'],
@@ -138,8 +175,37 @@ def train_savi(config, args, device):
     ).to(device)
 
 
-    matcher = DETRHungarianMatcher(cost_mask=1.0, cost_dice=1.0)
-    criterion = DETRMaskLoss(matcher=matcher, weight_mask=config.get('mask_loss_w', 1.0), weight_dice=1.0).to(device)
+    print(f"[Hardware Verification] StoSAVi model parameters allocated on: {next(model.parameters()).device} ({torch.cuda.get_device_name(device)})", flush=True)
+
+    ckpt_path = getattr(args, 'ckpt_path', None)
+    if not ckpt_path and getattr(args, 'resume', False):
+        for fname in ['savi_best.pt', 'savi_latest.pt', 'savi_final.pt']:
+            candidate = os.path.join(save_dir, fname)
+            if os.path.exists(candidate):
+                ckpt_path = candidate
+                break
+
+    if ckpt_path and os.path.exists(ckpt_path):
+        checkpoint = torch.load(ckpt_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state'])
+        print(f"[Resume Weights] Successfully loaded StoSAVi model weights from: '{ckpt_path}'", flush=True)
+
+
+
+    matcher = DETRHungarianMatcher(cost_bce=1.0, cost_dice=1.0)
+    criterion = DETRMaskLoss(weight_bce=config.get('mask_loss_w', 1.0), weight_dice=1.0).to(device)
+    sigreg_criterion = SIGRegLoss().to(device)
+    contrast_criterion = TemporalSlotContrastiveLoss().to(device)
+
+    ablation_mode = getattr(args, 'ablation', 'none')
+    use_mask_loss = config.get('loss_dict', {}).get('use_mask_loss', True)
+    if ablation_mode != 'none':
+        use_mask_loss = False  # Ablation runs are fully self-supervised
+
+    sigreg_w = config.get('sigreg_loss_w', 0.1) if ablation_mode in ['sigreg', 'full'] or (ablation_mode == 'none' and not use_mask_loss) else 0.0
+    contrast_w = config.get('contrast_loss_w', 0.05) if ablation_mode == 'full' else 0.0
+
+    print(f"[Self-Supervised Setup] Batch Size: {batch_size} | Mask GT Loss: {use_mask_loss} | SIGReg Weight: {sigreg_w} | Contrast Weight: {contrast_w}", flush=True)
 
     lr = float(config.get('lr', 2e-4))
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -148,10 +214,116 @@ def train_savi(config, args, device):
     total_steps = max_epochs * len(train_loader)
     warmup_steps = int(total_steps * config.get('warmup_pct', 0.05))
 
+    es_cfg = config.get('early_stopping', {})
+    es_enabled = es_cfg.get('enabled', True)
+    es_patience = es_cfg.get('patience', 3)
+    es_min_delta = es_cfg.get('min_delta', 1e-4)
+    val_every_n_steps = es_cfg.get('val_every_n_steps', 50)
+    max_val_batches = es_cfg.get('max_val_batches', 50)
+    early_stopper = EarlyStopping(patience=es_patience, min_delta=es_min_delta, mode='min') if es_enabled else None
+
+
+    @torch.no_grad()
+    def evaluate_val():
+        model.eval()
+        val_loss_sum = 0.0
+        val_iou_sum = 0.0
+        val_psnr_sum = 0.0
+        val_ssim_sum = 0.0
+        val_latent_std_sum = 0.0
+        val_sigreg_sum = 0.0
+        val_fg_ari_sum = 0.0
+        ari_batches = 0
+        n_batches = 0
+
+        for i, val_batch in enumerate(val_loader):
+            if i >= max_val_batches:
+                break
+            imgs = val_batch['img'].to(device)
+            out_dict = model({'img': imgs})
+            masks_pred = out_dict['post_masks']
+            loss_dict = model.calc_train_loss({'img': imgs}, out_dict)
+            
+            recon_loss = loss_dict.get('post_recon_loss', torch.tensor(0.0, device=device))
+            kld_loss = loss_dict.get('kld_loss', torch.tensor(0.0, device=device))
+            sigreg_loss = sigreg_criterion(out_dict['post_slots']) if sigreg_w > 0 else torch.tensor(0.0, device=device)
+            contrast_loss = contrast_criterion(out_dict['post_slots']) if contrast_w > 0 else torch.tensor(0.0, device=device)
+
+            if use_mask_loss and 'gt_masks' in val_batch:
+                gt_masks = val_batch['gt_masks'].to(device)
+                B, T = imgs.shape[0], imgs.shape[1]
+                if masks_pred.ndim == 6:
+                    K, C_m, H, W = masks_pred.shape[2:]
+                    pred_masks_5d = masks_pred.view(B * T, K, C_m, H, W)
+                else:
+                    K, H, W = masks_pred.shape[2:]
+                    pred_masks_5d = masks_pred.view(B * T, K, 1, H, W)
+                pred_masks_4d = pred_masks_5d[:, :, 0, :, :]
+                gt_masks_flat = gt_masks.view(B * T, -1, H, W)
+                indices = matcher(pred_masks_4d, gt_masks_flat)
+                loss_detr, bce_l, dice_l = criterion(pred_masks_5d, gt_masks_flat, indices)
+                mask_iou = 1.0 - dice_l
+            else:
+                loss_detr = torch.tensor(0.0, device=device)
+                mask_iou = torch.tensor(0.0, device=device)
+
+            total_loss = loss_detr + config.get('recon_loss_w', 1.0) * recon_loss + config.get('kld_loss_w', 1e-4) * kld_loss + sigreg_w * sigreg_loss + contrast_w * contrast_loss
+
+            # Quantitative evaluation metrics (see src.metrics.eval_metrics for docstrings)
+
+            recon_img = out_dict['post_recon_combined']
+            psnr = compute_psnr(recon_img, imgs)
+            ssim = compute_ssim(recon_img, imgs)
+            latent_std = compute_latent_std(out_dict['post_slots'])
+            sigreg_stat = compute_sigreg_stat(out_dict['post_slots'])
+
+
+            if i == 0:
+                # Random sample selection from first validation batch
+                sample_idx = torch.randint(0, imgs.shape[0], (1,)).item()
+                gt_sample = imgs[sample_idx, 0].clamp(0.0, 1.0)
+                recon_sample = recon_img[sample_idx, 0].clamp(0.0, 1.0)
+                m_sample = masks_pred[sample_idx, 0]
+                if m_sample.ndim == 4:
+                    m_sample = m_sample.squeeze(1) # [K, H, W]
+                m_sample_rgb = m_sample.unsqueeze(1).repeat(1, 3, 1, 1).clamp(0.0, 1.0) # [K, 3, H, W]
+                vis_list = [gt_sample, recon_sample] + [m_sample_rgb[k] for k in range(m_sample_rgb.shape[0])]
+                vis_grid = torch.cat(vis_list, dim=2) # Concat along width (W)
+
+            if i < 10 and 'gt_masks' in val_batch:
+                fg_ari = compute_fg_ari(masks_pred, val_batch['gt_masks'])
+                val_fg_ari_sum += fg_ari
+                ari_batches += 1
+
+            val_loss_sum += total_loss.item()
+            val_iou_sum += mask_iou.item()
+            val_psnr_sum += psnr
+            val_ssim_sum += ssim
+            val_latent_std_sum += latent_std
+            val_sigreg_sum += sigreg_stat
+            n_batches += 1
+
+        model.train()
+        return {
+            'loss': val_loss_sum / max(1, n_batches),
+            'iou': val_iou_sum / max(1, n_batches),
+            'psnr': val_psnr_sum / max(1, n_batches),
+            'ssim': val_ssim_sum / max(1, n_batches),
+            'latent_std': val_latent_std_sum / max(1, n_batches),
+            'sigreg_stat': val_sigreg_sum / max(1, n_batches),
+            'fg_ari': val_fg_ari_sum / max(1, ari_batches),
+            'vis_grid': vis_grid if 'vis_grid' in locals() else None
+        }
+
+
     global_step = 0
-    print(f"[Train StoSAVi] Starting training for {max_epochs} epochs ({total_steps} steps)...")
+    should_stop = False
+    print(f"[Train StoSAVi] Starting training for {max_epochs} epochs ({total_steps} steps, batch_size={batch_size}, val every {val_every_n_steps} steps)...", flush=True)
+
 
     for epoch in range(1, max_epochs + 1):
+        if should_stop:
+            break
         model.train()
         epoch_loss = 0.0
         for batch in train_loader:
@@ -160,22 +332,37 @@ def train_savi(config, args, device):
             for param_group in optimizer.param_groups:
                 param_group['lr'] = curr_lr
 
-            imgs = batch['img'].to(device)         # [B, T, 3, H, W]
-            gt_masks = batch['gt_masks'].to(device) # [B, T, M, H, W]
+            imgs = batch['img'].to(device)
 
             optimizer.zero_grad()
-            masks_pred, slots, loss_dict = model(imgs, gt_masks)
-            
-            # Hungarian matching mask loss across frames
-            B, T, K, H, W = masks_pred.shape
-            pred_masks_flat = masks_pred.view(B * T, K, H, W)
-            gt_masks_flat = gt_masks.view(B * T, -1, H, W)
+            out_dict = model({'img': imgs})
+            masks_pred = out_dict['post_masks']
+            loss_dict = model.calc_train_loss({'img': imgs}, out_dict)
 
-            loss_detr, mask_iou = criterion(pred_masks_flat, gt_masks_flat)
-            recon_loss = loss_dict.get('recon_loss', torch.tensor(0.0, device=device))
+            recon_loss = loss_dict.get('post_recon_loss', torch.tensor(0.0, device=device))
             kld_loss = loss_dict.get('kld_loss', torch.tensor(0.0, device=device))
+            sigreg_loss = sigreg_criterion(out_dict['post_slots']) if sigreg_w > 0 else torch.tensor(0.0, device=device)
+            contrast_loss = contrast_criterion(out_dict['post_slots']) if contrast_w > 0 else torch.tensor(0.0, device=device)
 
-            total_loss = loss_detr + config.get('recon_loss_w', 1.0) * recon_loss + config.get('kld_loss_w', 1e-4) * kld_loss
+            if use_mask_loss and 'gt_masks' in batch:
+                gt_masks = batch['gt_masks'].to(device)
+                B, T = imgs.shape[0], imgs.shape[1]
+                if masks_pred.ndim == 6:
+                    K, C_m, H, W = masks_pred.shape[2:]
+                    pred_masks_5d = masks_pred.view(B * T, K, C_m, H, W)
+                else:
+                    K, H, W = masks_pred.shape[2:]
+                    pred_masks_5d = masks_pred.view(B * T, K, 1, H, W)
+                pred_masks_4d = pred_masks_5d[:, :, 0, :, :]
+                gt_masks_flat = gt_masks.view(B * T, -1, H, W)
+                indices = matcher(pred_masks_4d, gt_masks_flat)
+                loss_detr, bce_l, dice_l = criterion(pred_masks_5d, gt_masks_flat, indices)
+                mask_iou = 1.0 - dice_l
+            else:
+                loss_detr = torch.tensor(0.0, device=device)
+                mask_iou = torch.tensor(0.0, device=device)
+
+            total_loss = loss_detr + config.get('recon_loss_w', 1.0) * recon_loss + config.get('kld_loss_w', 1e-4) * kld_loss + sigreg_w * sigreg_loss + contrast_w * contrast_loss
             total_loss.backward()
 
             if config.get('clip_grad', 0.0) > 0:
@@ -184,24 +371,91 @@ def train_savi(config, args, device):
             optimizer.step()
             epoch_loss += total_loss.item()
 
+
+
+
             if global_step % 10 == 0:
+                train_recon = recon_loss.item()
+                train_sigreg = sigreg_loss.item()
+                train_std = compute_latent_std(out_dict['post_slots'])
                 trainer.log_scalar('train/loss', total_loss.item(), global_step)
-                trainer.log_scalar('train/mask_iou', mask_iou.item(), global_step)
+                trainer.log_scalar('train/recon_loss', train_recon, global_step)
+                trainer.log_scalar('train/sigreg_loss', train_sigreg, global_step)
+                trainer.log_scalar('train/latent_std', train_std, global_step)
                 trainer.log_scalar('train/lr', curr_lr, global_step)
+                print(f"[Step {global_step}/{total_steps}] Train Loss: {total_loss.item():.4f} | Recon: {train_recon:.4f} | SIGReg: {train_sigreg:.4f} | Latent Std: {train_std:.4f} | LR: {curr_lr:.6f}", flush=True)
+
+
+            if global_step % val_every_n_steps == 0 or global_step == total_steps:
+                val_res = evaluate_val()
+                val_loss = val_res['loss']
+                trainer.log_scalar('val/loss', val_loss, global_step)
+                trainer.log_scalar('val/psnr', val_res['psnr'], global_step)
+                trainer.log_scalar('val/ssim', val_res['ssim'], global_step)
+                trainer.log_scalar('val/fg_ari', val_res['fg_ari'], global_step)
+                trainer.log_scalar('val/latent_std', val_res['latent_std'], global_step)
+                trainer.log_scalar('val/sigreg_stat', val_res['sigreg_stat'], global_step)
+
+                if val_res.get('vis_grid') is not None:
+                    trainer.log_image('val/reconstruction_visualization', val_res['vis_grid'], global_step)
+
+                print(f"[Step {global_step}/{total_steps}] Val Loss: {val_loss:.4f} | PSNR: {val_res['psnr']:.2f}dB | SSIM: {val_res['ssim']:.4f} | FG-ARI: {val_res['fg_ari']*100:.1f}% | Latent Std: {val_res['latent_std']:.4f}", flush=True)
+
+
+
+                if early_stopper:
+                    improved = early_stopper(val_loss)
+                    if improved:
+                        trainer.save_checkpoint({
+                            'epoch': epoch,
+                            'step': global_step,
+                            'model_state': model.state_dict(),
+                            'optimizer_state': optimizer.state_dict(),
+                            'config': config
+                        }, filename="savi_best.pt")
+                        print(f" -> Saved new best checkpoint 'savi_best.pt' (val_loss: {val_loss:.4f})", flush=True)
+                    if early_stopper.early_stop:
+                        print(f"[EarlyStopping] Early stopping triggered at step {global_step}! Saving final checkpoint.", flush=True)
+                        trainer.save_checkpoint({
+                            'epoch': epoch,
+                            'step': global_step,
+                            'model_state': model.state_dict(),
+                            'optimizer_state': optimizer.state_dict(),
+                            'config': config
+                        }, filename="savi_early_stopped.pt")
+                        should_stop = True
+                        break
+
+            limit_batches = getattr(args, 'limit_train_batches', None)
+            if limit_batches and global_step >= limit_batches:
+                print(f"[LimitBatches] Reached limit of {limit_batches} train batches.", flush=True)
+                should_stop = True
+                break
+
 
         avg_loss = epoch_loss / max(1, len(train_loader))
-        print(f"Epoch [{epoch}/{max_epochs}] Average Loss: {avg_loss:.4f}")
+        print(f"Epoch [{epoch}/{max_epochs}] Average Loss: {avg_loss:.4f}", flush=True)
 
-        if epoch % config.get('save_every_n_epochs', 5) == 0 or epoch == max_epochs:
-            trainer.save_checkpoint({
-                'epoch': epoch,
-                'model_state': model.state_dict(),
-                'optimizer_state': optimizer.state_dict(),
-                'config': config
-            }, filename=f"savi_epoch_{epoch}.pt")
+        # Overwrite savi_latest.pt at the end of each epoch (no individual per-epoch files)
+        trainer.save_checkpoint({
+            'epoch': epoch,
+            'step': global_step,
+            'model_state': model.state_dict(),
+            'optimizer_state': optimizer.state_dict(),
+            'config': config
+        }, filename="savi_latest.pt")
 
-    trainer.save_checkpoint({'model_state': model.state_dict(), 'config': config}, filename="savi_final.pt")
+    trainer.save_checkpoint({
+        'epoch': epoch if 'epoch' in locals() else max_epochs,
+        'step': global_step,
+        'model_state': model.state_dict(),
+        'optimizer_state': optimizer.state_dict(),
+        'config': config
+    }, filename="savi_final.pt")
     trainer.close()
+
+
+
 
 
 # ── Train Slot-PIDM (Stage 2) ─────────────────────────────────────────────────
@@ -313,7 +567,15 @@ def main():
                         help="Training mode: 'savi' (Stage 1 StoSAVi) or 'slot_pidm' (Stage 2 Slot-PIDM)")
     parser.add_argument("--savi_ckpt", type=str, default=None, help="Path to Stage 1 StoSAVi checkpoint (for slot_pidm)")
     parser.add_argument("--max_epochs", type=int, default=None, help="Override max training epochs")
+    parser.add_argument("--limit_train_batches", type=int, default=None, help="Limit number of train batches")
+    parser.add_argument("--ablation", type=str, choices=['none', 'baseline', 'sigreg', 'full'], default='none', help="Ablation study variant")
+    parser.add_argument("--encoder_type", type=str, choices=['cnn', 'tinyvit'], default=None,
+                        help="Encoder architecture: 'cnn' (standard 4-layer Conv2D) or 'tinyvit' (ImageNet-pretrained TinyViT-5M)")
+
+    parser.add_argument("--resume", action="store_true", help="Resume training from existing checkpoint in ckpt_dir if available")
+    parser.add_argument("--ckpt_path", type=str, default=None, help="Explicit path to checkpoint file to load weights from")
     parser.add_argument("--device", type=str, default=None, help="Specify device (cuda/cpu)")
+
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
 
@@ -322,6 +584,10 @@ def main():
 
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
+
+    if args.encoder_type is not None:
+        config.setdefault('enc_dict', {})['encoder_type'] = args.encoder_type
+
 
     mode = args.mode
     if mode == 'auto':

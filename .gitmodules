@@ -7,3 +7,12 @@
 [submodule "third_party/Seer"]
 	path = third_party/Seer
 	url = https://github.com/InternRobotics/Seer.git
+[submodule "third_party/PlaySlot"]
+	path = third_party/PlaySlot
+	url = https://github.com/angelvillar96/PlaySlot
+[submodule "third_party/gym-pusht"]
+	path = third_party/gym-pusht
+	url = https://github.com/huggingface/gym-pusht.git
+[submodule "third_party/stable-worldmodel"]
+	path = third_party/stable-worldmodel
+	url = https://github.com/galilai-group/stable-worldmodel.git
