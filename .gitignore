@@ -149,4 +149,7 @@ cython_debug/
 
 # Scratch and debug directory
 scratch/
+outputs/
+.hydra/
+
 
