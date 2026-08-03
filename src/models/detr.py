@@ -32,6 +32,7 @@ class ResNetBackbone(nn.Module):
 
 class PositionEmbeddingSine(nn.Module):
     """Sine positional embedding (similar to DETR paper)."""
+
     def __init__(self, num_pos_feats=64, temperature=10000, normalize=True):
         super().__init__()
         self.num_pos_feats = num_pos_feats
@@ -41,18 +42,17 @@ class PositionEmbeddingSine(nn.Module):
 
     def forward(self, tensor):
         # tensor: [B, C, H, W]
-        x_embed = tensor.sum(dim=1, keepdim=True)
-        mask = torch.zeros_like(x_embed, dtype=torch.bool)[:, 0]
-        not_mask = ~mask
-        y_embed = not_mask.cumsum(1, dtype=torch.float32)
-        x_embed = not_mask.cumsum(2, dtype=torch.float32)
-        
-        if self.normalize:
-            eps = 1e-6
-            y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale
-            x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale
+        B, C, H, W = tensor.shape
+        device = tensor.device
 
-        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=tensor.device)
+        y_embed = torch.arange(1, H + 1, device=device, dtype=torch.float32).view(1, H, 1).expand(B, H, W)
+        x_embed = torch.arange(1, W + 1, device=device, dtype=torch.float32).view(1, 1, W).expand(B, H, W)
+
+        if self.normalize:
+            y_embed = y_embed / y_embed[:, -1:, :] * self.scale
+            x_embed = x_embed / x_embed[:, :, -1:] * self.scale
+
+        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=device)
         dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
 
         pos_x = x_embed.unsqueeze(-1) / dim_t

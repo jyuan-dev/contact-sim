@@ -10,7 +10,6 @@ Computes:
 """
 
 import numpy as np
-import torch
 import cv2
 from scipy.optimize import linear_sum_assignment
 
