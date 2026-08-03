@@ -6,5 +6,6 @@ defaults:
 
 exp_name: "detr_pusht"
 epochs: 15
-batch_size: 32
+max_steps: 3000
+batch_size: 64
 lr: 1e-4

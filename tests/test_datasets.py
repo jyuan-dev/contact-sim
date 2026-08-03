@@ -3,52 +3,32 @@ import os
 import sys
 import torch
 
-# Ensure workspace root is in sys.path
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from src.datasets.pusht import PushTMaskHDF5Dataset, PushTDataset
-from src.datasets.ogbench import OGBenchCubeDataset
-from src.datasets.libero import LiberoDataset
+from src.datasets.factory import build_dataset, build_dataloader
+from src.datasets.pusht import PushTMaskHDF5Dataset
+from src.datasets.gridshapes import GridShapesDataset
+
 
 class TestDatasets(unittest.TestCase):
     def test_imports(self):
-        """Verify that all dataset modules can be imported correctly."""
+        """Verify that all retained dataset modules can be imported correctly."""
         self.assertIsNotNone(PushTMaskHDF5Dataset)
-        self.assertIsNotNone(PushTDataset)
-        self.assertIsNotNone(OGBenchCubeDataset)
-        self.assertIsNotNone(LiberoDataset)
+        self.assertIsNotNone(GridShapesDataset)
+        self.assertIsNotNone(build_dataset)
+        self.assertIsNotNone(build_dataloader)
 
-    def test_ogbench_stub(self):
-        """Test instantiation and output structure of the OGBench CUBE stub loader."""
-        dataset = OGBenchCubeDataset(
-            data_path="dummy_path.h5",
-            split="train",
-            resolution=(64, 64),
-            n_sample_frames=6
-        )
-        self.assertEqual(len(dataset), 950)
+    def test_gridshapes_dataset(self):
+        """Test instantiation and output structure of GridShapes synthetic dataset."""
+        dataset = build_dataset({'dataset': {'name': 'gridshapes', 'num_samples': 10, 'num_frames': 4}}, split='train')
+        self.assertEqual(len(dataset), 10)
         sample = dataset[0]
         self.assertIn('img', sample)
         self.assertIn('gt_masks', sample)
-        self.assertEqual(sample['img'].shape, (6, 3, 64, 64))
-        self.assertEqual(sample['gt_masks'].shape, (6, 3, 64, 64))
-
-    def test_libero_stub(self):
-        """Test instantiation and output structure of the LIBERO stub loader."""
-        dataset = LiberoDataset(
-            data_path="dummy_path.h5",
-            split="train",
-            resolution=(64, 64),
-            n_sample_frames=6
-        )
-        self.assertEqual(len(dataset), 100)
-        sample = dataset[0]
-        self.assertIn('img', sample)
-        self.assertIn('gt_masks', sample)
-        self.assertEqual(sample['img'].shape, (6, 3, 64, 64))
-        self.assertEqual(sample['gt_masks'].shape, (6, 3, 64, 64))
+        self.assertEqual(sample['img'].shape, (4, 3, 64, 64))
+        self.assertEqual(sample['gt_masks'].shape, (4, 3, 64, 64))
 
     def test_pusht_mask_dataset_real_or_stub(self):
         """Verify PushTMaskHDF5Dataset loads successfully if the dataset exists."""
@@ -70,6 +50,7 @@ class TestDatasets(unittest.TestCase):
         self.assertIn('gt_masks', sample)
         self.assertEqual(sample['img'].shape, (6, 3, 64, 64))
         self.assertEqual(sample['gt_masks'].shape, (6, 3, 64, 64))
+
 
 if __name__ == '__main__':
     unittest.main()

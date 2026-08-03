@@ -7,9 +7,12 @@ defaults:
 exp_name: ${model.name}_${dataset.name}
 seed: 42
 epochs: 8
-batch_size: 16
-num_workers: 4
+batch_size: 64
+num_workers: 8
 lr: 2e-4
+
 dry_run: false
+max_steps: null
 ckpt_path: null
+
 ep_idx: 6

@@ -26,7 +26,6 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from src.models.detr import DETR, ResNetBackbone, Transformer
-from src.models.slot_attention import build_savi_model
 
 
 class StandardizedDETRWrapper(nn.Module):
@@ -59,7 +58,8 @@ class StandardizedDETRWrapper(nn.Module):
             'pred_boxes': pred_boxes,
             'pred_masks': None,
             'pred_logits': pred_logits,
-            'recon_img': None
+            'recon_img': None,
+            'raw_out': raw_out
         }
 
 
@@ -88,11 +88,11 @@ class StandardizedSAViWrapper(nn.Module):
 
         raw_out = self.model(x_dict)
         
-        post_masks = raw_out.get('post_masks', None)
+        post_masks = raw_out.get('post_masks', raw_out.get('masks', raw_out.get('prior_masks', None)))
         if post_masks is not None and post_masks.ndim == 6:
             post_masks = post_masks.squeeze(3) # [B, T, K, H, W]
 
-        recon_img = raw_out.get('recon_combined', None)
+        recon_img = raw_out.get('post_recon_combined', raw_out.get('recon_combined', raw_out.get('recon', None)))
 
         return {
             'pred_boxes': None,
@@ -146,19 +146,22 @@ def build_model(cfg):
         return StandardizedDETRWrapper(base_model)
 
     elif 'savi' in model_type or 'slot' in model_type:
-        res = tuple(merged_cfg.get('resolution', [64, 64]))
-        clip_len = merged_cfg.get('n_sample_frames', merged_cfg.get('clip_len', 16))
-        
-        base_model = build_savi_model(
-            resolution=res,
-            clip_len=clip_len,
-            slot_dict=merged_cfg.get('slot_dict', {}),
-            enc_dict=merged_cfg.get('enc_dict', {}),
-            dec_dict=merged_cfg.get('dec_dict', {}),
-            pred_dict=merged_cfg.get('pred_dict', {}),
-            loss_dict=merged_cfg.get('loss_dict', None)
+        from src.models.playslot_savi import PlaySlotSAVi
+        base_model = PlaySlotSAVi(
+            num_slots=merged_cfg.get('num_slots', 4),
+            slot_dim=merged_cfg.get('slot_dim', 64),
+            num_iterations=merged_cfg.get('num_iterations', 3),
+            num_iterations_first=merged_cfg.get('num_iterations_first', merged_cfg.get('num_iterations', 3)),
+            in_channels=merged_cfg.get('in_channels', 3),
+            mlp_hidden=merged_cfg.get('mlp_hidden', 128),
+            mlp_encoder_dim=merged_cfg.get('mlp_encoder_dim', 128),
+            initializer=merged_cfg.get('initializer', None),
+            encoder=merged_cfg.get('encoder', None),
+            decoder=merged_cfg.get('decoder', None),
+            transition_module_params=merged_cfg.get('transition_module_params', None)
         )
         return StandardizedSAViWrapper(base_model)
 
     else:
-        raise ValueError(f"Unknown model type: '{model_type}'. Supported: 'detr', 'savi', 'stosavi'.")
+        raise ValueError(f"Unknown model type: '{model_type}'. Supported: 'detr', 'savi', 'playslot_savi'.")
+

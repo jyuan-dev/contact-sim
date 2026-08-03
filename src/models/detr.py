@@ -192,38 +192,37 @@ def masks_to_boxes_and_labels(gt_masks):
         targets: List of dicts, each with 'boxes' [M, 4] and 'labels' [M]
     """
     N, M, H, W = gt_masks.shape
+    device = gt_masks.device
+    mask_bool = gt_masks > 0.5
+    has_obj = mask_bool.flatten(2).any(dim=-1)  # [N, M]
+
+    y_grid = torch.arange(H, device=device).view(1, 1, H, 1)
+    x_grid = torch.arange(W, device=device).view(1, 1, 1, W)
+
+    y_min_val = torch.where(mask_bool, y_grid, torch.tensor(1e5, device=device)).flatten(2).min(dim=-1).values
+    y_max_val = torch.where(mask_bool, y_grid, torch.tensor(-1e5, device=device)).flatten(2).max(dim=-1).values
+    x_min_val = torch.where(mask_bool, x_grid, torch.tensor(1e5, device=device)).flatten(2).min(dim=-1).values
+    x_max_val = torch.where(mask_bool, x_grid, torch.tensor(-1e5, device=device)).flatten(2).max(dim=-1).values
+
+    h_norm = (y_max_val - y_min_val + 1.0) / H
+    w_norm = (x_max_val - x_min_val + 1.0) / W
+    cy_norm = (y_min_val + y_max_val) / 2.0 / H
+    cx_norm = (x_min_val + x_max_val) / 2.0 / W
+
+    boxes_all = torch.stack([cx_norm, cy_norm, w_norm, h_norm], dim=-1)  # [N, M, 4]
+
     targets = []
-    
     for i in range(N):
-        boxes = []
-        labels = []
-        for m_idx in range(M):
-            mask = gt_masks[i, m_idx]
-            coords = torch.nonzero(mask)
-            if len(coords) == 0:
-                continue
-            ymin, xmin = coords.min(dim=0).values
-            ymax, xmax = coords.max(dim=0).values
-            
-            # cx, cy, w, h normalized to [0, 1]
-            h = (ymax - ymin + 1) / H
-            w = (xmax - xmin + 1) / W
-            cy = (ymin + ymax) / 2.0 / H
-            cx = (xmin + xmax) / 2.0 / W
-            
-            boxes.append(torch.stack([cx, cy, w, h]))
-            labels.append(torch.tensor(m_idx, dtype=torch.long, device=gt_masks.device))
-        
-        if len(boxes) == 0:
+        valid = has_obj[i]
+        if not valid.any():
             targets.append({
-                'boxes': torch.zeros((0, 4), dtype=torch.float32, device=gt_masks.device),
-                'labels': torch.zeros((0,), dtype=torch.long, device=gt_masks.device)
+                'boxes': torch.zeros((0, 4), dtype=torch.float32, device=device),
+                'labels': torch.zeros((0,), dtype=torch.long, device=device)
             })
         else:
-            targets.append({
-                'boxes': torch.stack(boxes),
-                'labels': torch.stack(labels)
-            })
+            boxes = boxes_all[i, valid]
+            labels = torch.arange(M, device=device)[valid]
+            targets.append({'boxes': boxes, 'labels': labels})
     return targets
 
 

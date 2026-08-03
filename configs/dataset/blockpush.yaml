@@ -1,6 +1,0 @@
-name: "blockpush"
-type: "blockpush"
-datapath: "/home/jyuan/.stable-wm/blockpush"
-resolution: [64, 64]
-n_sample_frames: 16
-num_expert_demos: -1

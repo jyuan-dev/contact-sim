@@ -2,7 +2,11 @@ import os
 import math
 import numpy as np
 import h5py
-import hdf5plugin
+try:
+    import hdf5plugin
+    HDF5_PLUGIN_PATH = getattr(hdf5plugin, 'PLUGINS_PATH', None)
+except ImportError:
+    HDF5_PLUGIN_PATH = None
 import cv2
 import torch
 from torch.utils.data import Dataset
@@ -90,7 +94,8 @@ class PushTMaskHDF5Dataset(Dataset):
         offset = int(self._ep_offs[episode_idx])
         abs_idxs = [offset + i for i in frame_idxs]
 
-        os.environ["HDF5_PLUGIN_PATH"] = hdf5plugin.PLUGINS_PATH
+        if HDF5_PLUGIN_PATH and os.path.exists(HDF5_PLUGIN_PATH):
+            os.environ["HDF5_PLUGIN_PATH"] = HDF5_PLUGIN_PATH
         with h5py.File(self.h5_path, 'r') as f:
             frames = f['pixels'][abs_idxs]
             masks  = {k: f[k][abs_idxs] for k in self.MASK_KEYS}
@@ -111,7 +116,8 @@ class PushTMaskHDF5Dataset(Dataset):
         offset = int(self._ep_offs[episode_idx])
         ep_len = self._ep_lens[episode_idx]
 
-        os.environ["HDF5_PLUGIN_PATH"] = hdf5plugin.PLUGINS_PATH
+        if HDF5_PLUGIN_PATH and os.path.exists(HDF5_PLUGIN_PATH):
+            os.environ["HDF5_PLUGIN_PATH"] = HDF5_PLUGIN_PATH
         with h5py.File(self.h5_path, 'r') as f:
             frames = f['pixels'][offset:offset + ep_len]
             masks  = {k: f[k][offset:offset + ep_len] for k in self.MASK_KEYS}

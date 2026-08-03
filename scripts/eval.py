@@ -9,11 +9,7 @@ Usage:
 
 import sys
 import os
-import argparse
 import json
-import yaml
-import h5py
-import hdf5plugin
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -30,8 +26,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from src.models.factory import build_model
+from src.datasets.factory import build_dataloader
 from src.metrics.evaluator import EvaluationSuite
-from src.datasets.pusht import PushTMaskHDF5Dataset
 
 SLOT_COLORS_RGB = {
     0: (255, 40, 40),     # Slot 0: Red
@@ -42,21 +38,19 @@ SLOT_COLORS_RGB = {
 }
 
 GT_COLORS_RGB = {
-    0: (255, 140, 0),    # Orange (Block)
-    1: (0, 230, 115),    # Green (Agent)
-    2: (0, 128, 255)     # Blue (Goal)
+    0: (255, 140, 0),    # Orange
+    1: (0, 230, 115),    # Green
+    2: (0, 128, 255)     # Blue
 }
 
 
-@hydra.main(config_path="../configs", config_name="config", version_base=None)
+@hydra.main(config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-    ckpt_path = cfg.get('ckpt_path', None) or cfg.get('ckpt', None) or "/home/jyuan/.stable-wm/savi_mask_detr/savi_epoch_8.pt"
-    ep_idx = cfg.get('ep_idx', 6)
-
+    ckpt_path = cfg.get('ckpt_path', None) or cfg.get('ckpt', None)
     model_name = cfg.model.name
     dataset_name = cfg.dataset.name
 
@@ -64,58 +58,53 @@ def main(cfg: DictConfig):
     print(f"            Hydra Baseline Evaluator ({model_name} / {dataset_name})  ")
     print("======================================================================")
     print(f"Device: {device}")
-    print(f"Loading Checkpoint: {ckpt_path}")
 
     # 1. Build Model via Factory
     model = build_model(cfg_dict).to(device)
 
-    ckpt_data = torch.load(ckpt_path, map_location=device)
-    target_model = model.model if hasattr(model, 'model') else model
-    state = ckpt_data.get('model', ckpt_data.get('model_state', ckpt_data))
-    state = {k.replace('model.', '').replace('module.', ''): v for k, v in state.items()}
-    target_model.load_state_dict(state)
+    if ckpt_path and os.path.exists(ckpt_path):
+        print(f"Loading Checkpoint: {ckpt_path}")
+        ckpt_data = torch.load(ckpt_path, map_location=device)
+        target_model = model.model if hasattr(model, 'model') else model
+        state = ckpt_data.get('model', ckpt_data.get('model_state', ckpt_data))
+        state = {k.replace('model.', '').replace('module.', ''): v for k, v in state.items()}
+        target_model.load_state_dict(state, strict=False)
+        print("Checkpoint loaded successfully!")
+    else:
+        print("No valid checkpoint specified or file not found. Running with initial weights.")
 
     model.eval()
-    print("Model loaded successfully into eval mode!")
 
-    # 2. Extract Episode Data
-    h5_path = cfg.dataset.get('h5_path', '/home/jyuan/.stable-wm/pusht_expert_train_enriched.h5')
-    if not os.path.exists(h5_path):
-        h5_path = '/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5'
+    # 2. Build Dataloader via Factory
+    val_loader = build_dataloader(cfg_dict, split='val', batch_size=1, num_workers=2, shuffle=False)
 
-    with h5py.File(h5_path, 'r') as f:
-        ep_lens = np.array(f['ep_len'])
-        ep_offs = np.array(f['ep_offset'])
-        offset = ep_offs[ep_idx]
-        length = ep_lens[ep_idx]
-        pixels = np.array(f['pixels'][offset : offset + length])
-        b_masks = np.array(f['block_masks'][offset : offset + length]) > 0
-        a_masks = np.array(f['agent_masks'][offset : offset + length]) > 0
-        g_masks = np.array(f['goal_masks'][offset : offset + length]) > 0
+    evaluator = EvaluationSuite(num_classes=3)
+    batch = next(iter(val_loader))
 
-    T = length
-    print(f"Loaded validation episode index {ep_idx}: {T} frames.")
-
-    imgs_np = pixels.transpose(0, 3, 1, 2) if (pixels.ndim == 4 and pixels.shape[-1] == 3) else pixels
-    imgs_torch = torch.tensor(imgs_np, dtype=torch.float32, device=device) / 255.0
-    imgs_torch_norm = (imgs_torch - 0.5) / 0.5
-
-    if imgs_torch_norm.shape[-1] != 64 or imgs_torch_norm.shape[-2] != 64:
-        imgs_torch_norm = F.interpolate(imgs_torch_norm, size=(64, 64), mode='bilinear', align_corners=False)
+    imgs_torch = batch['img'] if 'img' in batch else batch['video']
+    imgs_torch = imgs_torch.to(device)
+    gt_masks = batch.get('gt_masks', None)
+    if gt_masks is not None:
+        gt_masks = gt_masks.to(device)
 
     # 3. Forward Pass
     with torch.no_grad():
-        out = model(imgs_torch_norm.unsqueeze(0))
+        out = model(imgs_torch)
 
     pred_masks = out.get('pred_masks', None)
     if pred_masks is not None:
-        pred_masks_np = pred_masks[0].cpu().numpy() # [T, K, H, W]
+        pred_masks_np = pred_masks[0].cpu().numpy()
     else:
+        T = imgs_torch.shape[1] if imgs_torch.ndim == 5 else 1
         pred_masks_np = np.zeros((T, 4, 64, 64), dtype=np.float32)
 
     # 4. Evaluate Metrics
-    evaluator = EvaluationSuite(num_classes=3)
-    gt_masks_dict = {0: b_masks, 1: a_masks, 2: g_masks}
+    if gt_masks is not None:
+        gt_masks_np = gt_masks[0].cpu().numpy() # [T, M, H, W]
+        gt_masks_dict = {m_idx: (gt_masks_np[:, m_idx] > 0.5) for m_idx in range(gt_masks_np.shape[1])}
+    else:
+        gt_masks_dict = {}
+
     metrics = evaluator.evaluate_sequence_masks(pred_masks_np, gt_masks_dict)
 
     print("\n---------------- Quantitative Evaluation Report ----------------")
@@ -130,7 +119,12 @@ def main(cfg: DictConfig):
 
     # 5. Render & Save Visualization GIF
     vis_frames = []
-    img_raw_np = (imgs_torch.permute(0, 2, 3, 1).cpu().numpy() * 255.0).astype(np.uint8)
+    video_tensor = imgs_torch[0].cpu()
+    if video_tensor.ndim == 3:
+        video_tensor = video_tensor.unsqueeze(0)
+
+    T = video_tensor.shape[0]
+    img_raw_np = ((video_tensor.permute(0, 2, 3, 1).numpy() * 0.5 + 0.5) * 255.0).clip(0, 255).astype(np.uint8)
 
     for t in range(T):
         frame_rgb = img_raw_np[t]
@@ -139,13 +133,13 @@ def main(cfg: DictConfig):
 
         # Left Panel: GT Outlines
         p_gt = frame_rgb.copy()
-        gt_list = [b_masks[t], a_masks[t], g_masks[t]]
-        for m_idx in range(3):
-            m_bin = gt_list[m_idx]
-            if m_bin.any():
-                contours, _ = cv2.findContours(m_bin.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                color_bgr = (GT_COLORS_RGB[m_idx][2], GT_COLORS_RGB[m_idx][1], GT_COLORS_RGB[m_idx][0])
-                cv2.drawContours(p_gt, contours, -1, color_bgr, 1)
+        if gt_masks is not None:
+            for m_idx in range(gt_masks_np.shape[1]):
+                m_bin = gt_masks_np[t, m_idx] > 0.5
+                if m_bin.any():
+                    contours, _ = cv2.findContours(m_bin.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    color_bgr = GT_COLORS_RGB.get(m_idx, (255, 255, 255))
+                    cv2.drawContours(p_gt, contours, -1, color_bgr, 1)
 
         # Right Panel: Pure Slot Mask Overlay
         p_slots = frame_rgb.copy().astype(np.float32)
@@ -181,12 +175,6 @@ def main(cfg: DictConfig):
     out_gif = "scratch/baseline_eval_demo.gif"
     imageio.mimsave(out_gif, vis_frames, fps=10, loop=0)
     print(f"Saved evaluation video to: {out_gif}")
-
-    # Copy to brain dir if available
-    brain_dir = "/home/jyuan/.gemini/antigravity-ide/brain/0e62dc39-5378-4e8f-b19c-9d502981fb60"
-    if os.path.exists(brain_dir):
-        import shutil
-        shutil.copy(out_gif, os.path.join(brain_dir, "baseline_eval_demo.gif"))
 
     # Save JSON report
     report_json_path = "scratch/baseline_eval_metrics.json"

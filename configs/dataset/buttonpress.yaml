@@ -1,6 +1,0 @@
-name: "buttonpress"
-type: "buttonpress"
-datapath: "/home/jyuan/.stable-wm/buttonpress"
-resolution: [64, 64]
-n_sample_frames: 16
-num_expert_demos: -1
