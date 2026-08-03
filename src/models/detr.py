@@ -207,6 +207,35 @@ def generalized_box_iou(boxes1, boxes2):
     return giou
 
 
+def batched_generalized_box_iou(boxes1, boxes2):
+    """
+    Computes GIoU for batched boxes: boxes1 [B, Q, 4], boxes2 [B, M, 4] in cxcywh format.
+    Returns tensor of shape [B, Q, M].
+    """
+    b1 = box_cxcywh_to_xyxy(boxes1)  # [B, Q, 4]
+    b2 = box_cxcywh_to_xyxy(boxes2)  # [B, M, 4]
+
+    area1 = (b1[..., 2] - b1[..., 0]) * (b1[..., 3] - b1[..., 1])  # [B, Q]
+    area2 = (b2[..., 2] - b2[..., 0]) * (b2[..., 3] - b2[..., 1])  # [B, M]
+
+    lt = torch.maximum(b1[..., None, :2], b2[..., None, :, :2])  # [B, Q, M, 2]
+    rb = torch.minimum(b1[..., None, 2:], b2[..., None, :, 2:])  # [B, Q, M, 2]
+
+    wh = (rb - lt).clamp(min=0)  # [B, Q, M, 2]
+    inter = wh[..., 0] * wh[..., 1]  # [B, Q, M]
+
+    union = area1[..., None] + area2[..., None, :] - inter
+    iou = inter / union.clamp(min=1e-6)
+
+    lt_c = torch.minimum(b1[..., None, :2], b2[..., None, :, :2])
+    rb_c = torch.maximum(b1[..., None, 2:], b2[..., None, :, 2:])
+    wh_c = (rb_c - lt_c).clamp(min=0)
+    area_c = wh_c[..., 0] * wh_c[..., 1]
+
+    giou = iou - (area_c - union) / area_c.clamp(min=1e-6)
+    return giou
+
+
 def masks_to_boxes_and_labels(gt_masks):
     """
     Args:
@@ -259,36 +288,54 @@ class HungarianMatcher(nn.Module):
 
     @torch.no_grad()
     def forward(self, outputs, targets):
-        B, num_queries = outputs["pred_logits"].shape[:2]
-        
-        out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [B * Q, num_classes + 1]
-        out_bbox = outputs["pred_boxes"].flatten(0, 1)              # [B * Q, 4]
-        device = out_prob.device
-
-        total_tgt = sum(len(v["labels"]) for v in targets)
-        if total_tgt == 0:
-            tgt_ids = torch.empty((0,), dtype=torch.long, device=device)
-            tgt_bbox = torch.empty((0, 4), dtype=torch.float32, device=device)
-        else:
-            tgt_ids = torch.cat([v["labels"].to(device) for v in targets])
-            tgt_bbox = torch.cat([v["boxes"].to(device) for v in targets])
-
-        cost_class = -out_prob[:, tgt_ids]
-        cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
-
-        out_bbox_xyxy = box_cxcywh_to_xyxy(out_bbox)
-        tgt_bbox_xyxy = box_cxcywh_to_xyxy(tgt_bbox)
-        cost_giou = -generalized_box_iou(out_bbox_xyxy, tgt_bbox_xyxy)
-
-        cost = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
-        cost = cost.view(B, num_queries, -1).cpu()
+        """
+        Batched GPU vectorized cost computation.
+        outputs['pred_logits']: [B, Q, num_classes + 1]
+        outputs['pred_boxes']:  [B, Q, 4]
+        targets: list of N dicts, each with 'boxes' [M_i, 4] and 'labels' [M_i]
+        """
+        out_logits = outputs["pred_logits"]
+        out_boxes = outputs["pred_boxes"]
+        B, Q, C = out_logits.shape
+        device = out_logits.device
 
         sizes = [len(v["boxes"]) for v in targets]
+        max_m = max(sizes) if sizes else 0
+
+        if max_m == 0:
+            return [(torch.empty(0, dtype=torch.int64), torch.empty(0, dtype=torch.int64)) for _ in range(B)]
+
+        tgt_labels_padded = torch.zeros(B, max_m, dtype=torch.long, device=device)
+        tgt_boxes_padded = torch.zeros(B, max_m, 4, dtype=torch.float32, device=device)
+
+        for i, t in enumerate(targets):
+            m = sizes[i]
+            if m > 0:
+                tgt_labels_padded[i, :m] = t["labels"].to(device)
+                tgt_boxes_padded[i, :m] = t["boxes"].to(device)
+
+        out_prob = out_logits.softmax(-1)  # [B, Q, C]
+
+        tgt_idx_expanded = tgt_labels_padded.unsqueeze(1).expand(-1, Q, -1)  # [B, Q, max_m]
+        c_class = -torch.gather(out_prob, 2, tgt_idx_expanded)  # [B, Q, max_m]
+
+        c_bbox = torch.cdist(out_boxes, tgt_boxes_padded, p=1)
+        c_giou = -batched_generalized_box_iou(out_boxes, tgt_boxes_padded)
+
+        cost = self.cost_bbox * c_bbox + self.cost_class * c_class + self.cost_giou * c_giou
+        cost_np = cost.detach().cpu().numpy()
+
         indices = []
-        for i, c in enumerate(cost.split(sizes, -1)):
-            row_ind, col_ind = linear_sum_assignment(c[i].numpy())
-            indices.append((torch.as_tensor(row_ind, dtype=torch.int64),
-                            torch.as_tensor(col_ind, dtype=torch.int64)))
+        for i in range(B):
+            m = sizes[i]
+            if m == 0:
+                indices.append((torch.empty(0, dtype=torch.int64), torch.empty(0, dtype=torch.int64)))
+            else:
+                c_i = cost_np[i, :, :m]
+                row_ind, col_ind = linear_sum_assignment(c_i)
+                indices.append((torch.as_tensor(row_ind, dtype=torch.int64),
+                                torch.as_tensor(col_ind, dtype=torch.int64)))
+
         return indices
 
 
@@ -357,6 +404,20 @@ class SetCriterion(nn.Module):
             B, Q, C = pred_logits.shape
             L = 1
 
+        if L > 1:
+            out_all = {
+                'pred_logits': pred_logits.view(B * L, Q, C),
+                'pred_boxes': pred_boxes.view(B * L, Q, 4)
+            }
+            all_indices = self.matcher(out_all, targets * L)
+            indices_per_layer = [all_indices[l * B : (l + 1) * B] for l in range(L)]
+        else:
+            indices_per_layer = [self.matcher(outputs, targets)]
+
+        num_boxes = sum(len(t["labels"]) for t in targets)
+        num_boxes_t = torch.as_tensor([num_boxes], dtype=torch.float, device=pred_logits.device)
+        num_boxes_val = torch.clamp(num_boxes_t, min=1).item()
+
         losses = {}
         for layer in range(L):
             if L > 1:
@@ -364,13 +425,9 @@ class SetCriterion(nn.Module):
             else:
                 layer_out = {'pred_logits': pred_logits, 'pred_boxes': pred_boxes}
 
-            indices = self.matcher(layer_out, targets)
-            num_boxes = sum(len(t["labels"]) for t in targets)
-            num_boxes_t = torch.as_tensor([num_boxes], dtype=torch.float,
-                                          device=pred_logits.device)
-            num_boxes_val = torch.clamp(num_boxes_t, min=1).item()
-
+            indices = indices_per_layer[layer]
             suffix = f'_aux_{layer}' if layer < L - 1 else ''
+
             for loss in self.losses:
                 if loss == 'labels':
                     l = self.loss_labels(layer_out, targets, indices, num_boxes_val)
