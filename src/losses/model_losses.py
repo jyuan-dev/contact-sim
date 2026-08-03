@@ -58,50 +58,59 @@ def compute_detr_loss(out, gt_masks, criterion, weight_dict):
     return total_loss, loss_dict
 
 
-def compute_savi_loss(raw_out, gt_masks, weight_dict=None):
+def compute_savi_loss(out, gt_masks, weight_dict=None):
     """
     Computes SAVi slot attention mask BCE + reconstruction MSE loss.
 
+    Consumes standardized contract keys (recon_img, pred_masks, input_img).
+
     Args:
-        raw_out (dict): Model output with optional keys 'recon_combined', 'post_masks', 'img'.
+        out (dict): Standardized model output with keys 'recon_img', 'pred_masks', 'input_img'.
         gt_masks (Tensor or None): Ground-truth masks [B, T, C, H, W].
         weight_dict (dict): Per-term weights, e.g. {'recon': 1.0, 'mask': 1.0, 'kld': 0.001}.
 
     Returns:
-        total_loss (Tensor or float): Weighted scalar loss.
+        total_loss (Tensor): Weighted scalar loss.
         loss_dict (dict): Per-term loss values and 'total_loss'.
     """
     if weight_dict is None:
-        weight_dict = {'recon': 1.0, 'mask': 1.0, 'kld': 0.001}
+        weight_dict = {'recon': 1.0, 'mask': 1.0}
 
-    recon_img = raw_out.get('recon_combined', None)
-    post_masks = raw_out.get('post_masks', None)
+    recon_img = out.get('recon_img')
+    post_masks = out.get('pred_masks')
+    input_img = out.get('input_img')
 
-    total_loss = 0.0
+    terms = []
     loss_dict = {}
 
-    if recon_img is not None and 'img' in raw_out:
-        target_img = raw_out['img']
-        recon_loss = F.mse_loss(recon_img, target_img)
-        total_loss += weight_dict.get('recon', 1.0) * recon_loss
+    if recon_img is not None and input_img is not None:
+        recon_loss = F.mse_loss(recon_img, input_img)
+        w = weight_dict.get('recon', 1.0)
+        terms.append(w * recon_loss)
         loss_dict['recon_loss'] = recon_loss.item()
 
     if post_masks is not None and gt_masks is not None:
-        p_masks = post_masks.squeeze(3) if post_masks.ndim == 6 else post_masks
+        if post_masks.ndim == 6 and post_masks.shape[3] == 1:
+            post_masks = post_masks.squeeze(3)
+
         if gt_masks.ndim == 5:
             B, T, C, H, W = gt_masks.shape
-            if p_masks.shape[-2:] != (H, W):
-                p_masks = F.interpolate(
-                    p_masks.view(B * T, -1, p_masks.shape[-2], p_masks.shape[-1]),
-                    size=(H, W), mode='bilinear', align_corners=False
+            if post_masks.shape[-2:] != (H, W):
+                post_masks = F.interpolate(
+                    post_masks.view(B * T, -1, post_masks.shape[-2], post_masks.shape[-1]),
+                    size=(H, W), mode='bilinear', align_corners=False,
                 ).view(B, T, -1, H, W)
 
             mask_bce = F.binary_cross_entropy(
-                torch.clamp(p_masks.max(dim=2)[0], 1e-4, 1 - 1e-4),
-                (gt_masks.max(dim=2)[0] > 0.5).float()
+                torch.clamp(post_masks.max(dim=2)[0], 1e-4, 1 - 1e-4),
+                (gt_masks.max(dim=2)[0] > 0.5).float(),
             )
-            total_loss += weight_dict.get('mask', 1.0) * mask_bce
+            w = weight_dict.get('mask', 1.0)
+            terms.append(w * mask_bce)
             loss_dict['mask_bce'] = mask_bce.item()
 
+    total_loss = sum(terms) if terms else torch.tensor(0.0, device=post_masks.device if post_masks is not None else
+                                                       recon_img.device if recon_img is not None else
+                                                       torch.device('cpu'))
     loss_dict['total_loss'] = total_loss.item() if isinstance(total_loss, torch.Tensor) else total_loss
     return total_loss, loss_dict

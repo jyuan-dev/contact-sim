@@ -140,38 +140,12 @@ def compute_latent_std(post_slots: torch.Tensor) -> float:
 
 def compute_sigreg_stat(post_slots: torch.Tensor, sketch_dim: int = 64) -> float:
     """
-    Computes Epps-Pulley empirical characteristic function statistic matching standard Gaussian N(0, I) (Le-WM / Garrido et al., 2024).
-
-    Formula:
-        SIGReg Stat = N * integral( | phi_hat(t) - exp(-0.5 * t^2) |^2 * exp(-0.5 * t^2) dt )
+    Computes Epps-Pulley empirical characteristic function statistic matching standard
+    Gaussian N(0, I) (Le-WM / Garrido et al., 2024).
 
     Interpretation:
-        - Evaluates the Cramér-Wold random 1D projections of slot vectors against theoretical N(0, I).
-        - Lower values indicate that slot representations are isotropic, well-conditioned, and match a Gaussian distribution.
+        - Lower values indicate slot representations are more isotropic / Gaussian.
     """
-    if post_slots.ndim > 2:
-        z = post_slots.reshape(-1, post_slots.shape[-1])
-    else:
-        z = post_slots
-
-    N, D = z.shape
-    if N <= 1:
-        return 0.0
-
-    z_norm = (z - z.mean(dim=0, keepdim=True)) / (z.std(dim=0, keepdim=True) + 1e-6)
-    A = torch.randn(D, sketch_dim, device=z.device, dtype=z.dtype)
-    A = A / (A.norm(p=2, dim=0, keepdim=True) + 1e-6)
-
-    proj = z_norm @ A
-    t = torch.linspace(-5.0, 5.0, 17, device=z.device, dtype=z.dtype)
-    exp_f = torch.exp(-0.5 * (t ** 2))
-
-    args = proj.unsqueeze(2) * t.view(1, 1, -1)
-    ecf_real = torch.cos(args).mean(dim=0)
-    ecf_imag = torch.sin(args).mean(dim=0)
-
-    diff_sq = (ecf_real - exp_f.unsqueeze(0)) ** 2 + (ecf_imag) ** 2
-    err = diff_sq * exp_f.unsqueeze(0)
-    loss = torch.trapz(err, t, dim=1) * N
-    return float(loss.mean().item())
+    from src.losses.sigreg import SIGRegLoss
+    return float(SIGRegLoss(sketch_dim=sketch_dim)(post_slots).item())
 
