@@ -7,8 +7,9 @@ import torch.nn as nn
 # Add PlaySlot src to sys.path
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PLAYSLOT_SRC = os.path.join(REPO_ROOT, 'third_party', 'PlaySlot', 'src')
-if PLAYSLOT_SRC not in sys.path:
-    sys.path.insert(0, PLAYSLOT_SRC)
+if PLAYSLOT_SRC in sys.path:
+    sys.path.remove(PLAYSLOT_SRC)
+sys.path.insert(0, PLAYSLOT_SRC)
 
 from models.SAVi import SAVi
 
