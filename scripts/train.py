@@ -9,7 +9,6 @@ Usage:
   python scripts/train.py dry_run=true           # Fast 5-batch dry run
 """
 
-import sys
 import os
 import time
 from datetime import timedelta
@@ -18,62 +17,41 @@ import torch
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-
 from src.models.factory import build_model
-from src.models.detr import HungarianMatcher, SetCriterion
 from src.datasets.factory import build_dataloader
 from src.training.trainer import BaseTrainer
-from src.losses import compute_detr_loss, compute_savi_loss
+from src.utils.training_utils import get_device
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _save_checkpoint(model, cfg_dict, ckpt_path, epoch):
+    torch.save({'model_state': model.state_dict(), 'config': cfg_dict, 'epoch': epoch}, ckpt_path)
+    print(f"Saved checkpoint: {ckpt_path}")
 
 
 @hydra.main(config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = get_device()
 
-    # Determine Experiment Name & Checkpoint Directory (Workspace Rule)
     model_name = cfg.model.name
     dataset_name = cfg.dataset.name
     exp_name = cfg.get('exp_name', f"{model_name}_{dataset_name}")
     ckpt_dir = os.path.join(REPO_ROOT, "scratch", "checkpoints", exp_name)
 
-    # Initialize BaseTrainer for dedicated train.log & TensorBoard logging
     trainer = BaseTrainer(save_dir=ckpt_dir, experiment_name=exp_name)
 
-    print("======================================================================")
+    print("=" * 70)
     print(f"            Hydra Baseline Trainer ({model_name} / {dataset_name})    ")
-    print("======================================================================")
+    print("=" * 70)
     print(f"Device: {device}")
     print(f"Checkpoint Directory: {ckpt_dir}")
 
-    # 1. Build Model via Factory
+    # 1. Build Model via Factory (wraps criterion/loss internally)
     model = build_model(cfg_dict).to(device)
     print(f"Model '{model_name}' instantiated successfully via factory!")
-
-    # Pre-initialize matcher and criterion if using DETR to avoid redundant allocations
-    detr_criterion = None
-    detr_w = None
-    if 'detr' in model_name:
-        detr_w = cfg_dict.get('model', {}).get('weight_dict', {'class': 1.0, 'bbox': 5.0, 'giou': 2.0})
-        # Extract underlying model from StandardizedDETRWrapper if wrapped
-        target_model = model.model if hasattr(model, 'model') else model
-        num_classes = target_model.class_embed.out_features - 1
-        matcher = HungarianMatcher(
-            cost_class=detr_w.get('class', 1.0),
-            cost_bbox=detr_w.get('bbox', 5.0),
-            cost_giou=detr_w.get('giou', 2.0)
-        )
-        detr_criterion = SetCriterion(
-            num_classes=num_classes,
-            matcher=matcher,
-            weight_dict=detr_w,
-            eos_coef=0.1,
-            losses=['labels', 'boxes']
-        ).to(device)
 
     # 2. Build Dataloaders via Factory
     batch_size = cfg.batch_size
@@ -94,7 +72,7 @@ def main(cfg: DictConfig):
     weight_decay = float(cfg.get('weight_decay', 1e-4))
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    max_steps = cfg.get('max_steps', None)
+    max_steps = cfg.get('max_steps')
     is_dry_run = cfg.get('dry_run', False)
     num_epochs = 1 if is_dry_run else (1000 if max_steps is not None else cfg.epochs)
     global_step = 0
@@ -103,6 +81,13 @@ def main(cfg: DictConfig):
 
     start_time = time.time()
     total_target_steps = max_steps if max_steps is not None else (num_epochs * len(train_loader))
+
+    def _step(batch):
+        """Single forward + loss step. Returns (loss, loss_dict) on device."""
+        video = batch['img']
+        video = video.to(device, non_blocking=True)
+        out = model(video)
+        return model.compute_loss(out, batch)
 
     # 4. Training Loop
     for epoch in range(num_epochs):
@@ -122,27 +107,15 @@ def main(cfg: DictConfig):
                 stop_training = True
                 break
 
-            video = batch['img'] if 'img' in batch else batch['video']
-            video = video.to(device, non_blocking=True)
-            gt_masks = batch['gt_masks'].to(device, non_blocking=True) if 'gt_masks' in batch else None
-
             optimizer.zero_grad()
-            out = model(video)
-
-            if out.get('pred_logits') is not None and out.get('pred_boxes') is not None:
-                loss, loss_dict = compute_detr_loss(out, gt_masks, detr_criterion, detr_w)
-            elif out.get('raw_out') is not None:
-                loss, loss_dict = compute_savi_loss(out['raw_out'], gt_masks, weight_dict=cfg_dict.get('weight_dict', None))
-            else:
-                raise ValueError(f"Model output for '{model_name}' has no recognized loss keys. "
-                                 "Expected 'pred_logits'/'pred_boxes' (DETR) or 'raw_out' (SAVi).")
-
+            loss, loss_dict = _step(batch)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
-            train_losses.append(loss.item())
-            trainer.log_scalar("Train/Loss", loss.item(), global_step)
+            loss_val = loss.item()
+            train_losses.append(loss_val)
+            trainer.log_scalar("Train/Loss", loss_val, global_step)
             for lk, lv in loss_dict.items():
                 if lk != 'total_loss':
                     trainer.log_scalar(f"Train/{lk}", lv, global_step)
@@ -157,7 +130,7 @@ def main(cfg: DictConfig):
                 speed_str = f"{1.0 / avg_sec_per_step:.2f} it/s" if avg_sec_per_step < 1.0 else f"{avg_sec_per_step:.2f} s/it"
                 progress_pct = (global_step / total_target_steps) * 100
                 loss_str = " ".join([f"{k}={v:.4f}" for k, v in loss_dict.items() if k != 'total_loss'])
-                print(f"Epoch [{epoch+1}/{num_epochs}] Step [{global_step}/{total_target_steps}] ({progress_pct:.1f}% | {speed_str} | ETA: {eta_str}) Total Loss: {loss.item():.4f} [{loss_str}]")
+                print(f"Epoch [{epoch+1}/{num_epochs}] Step [{global_step}/{total_target_steps}] ({progress_pct:.1f}% | {speed_str} | ETA: {eta_str}) Total Loss: {loss_val:.4f} [{loss_str}]")
 
         avg_train_loss = np.mean(train_losses) if train_losses else 0.0
         print(f"Epoch [{epoch+1}/{num_epochs}] Average Train Loss: {avg_train_loss:.4f}")
@@ -169,17 +142,7 @@ def main(cfg: DictConfig):
             for v_step, v_batch in enumerate(val_loader):
                 if is_dry_run and v_step >= 3:
                     break
-                v_video = v_batch['img'] if 'img' in v_batch else v_batch['video']
-                v_video = v_video.to(device)
-                v_gt_masks = v_batch['gt_masks'].to(device) if 'gt_masks' in v_batch else None
-                v_out = model(v_video)
-                if v_out.get('pred_logits') is not None and v_out.get('pred_boxes') is not None:
-                    v_loss, _ = compute_detr_loss(v_out, v_gt_masks, detr_criterion, detr_w)
-                elif v_out.get('raw_out') is not None:
-                    v_loss, _ = compute_savi_loss(v_out['raw_out'], v_gt_masks, weight_dict=cfg_dict.get('weight_dict', None))
-                else:
-                    raise ValueError(f"Model output for '{model_name}' has no recognized loss keys. "
-                                     "Expected 'pred_logits'/'pred_boxes' (DETR) or 'raw_out' (SAVi).")
+                v_loss, _ = _step(v_batch)
                 val_losses.append(v_loss.item())
 
         avg_val_loss = np.mean(val_losses) if val_losses else avg_train_loss
@@ -188,14 +151,12 @@ def main(cfg: DictConfig):
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            best_ckpt_path = os.path.join(ckpt_dir, f"{model_name}_best.pt")
-            torch.save({'model_state': model.state_dict(), 'config': cfg_dict, 'epoch': epoch+1}, best_ckpt_path)
-            print(f"Saved new best checkpoint: {best_ckpt_path}")
+            _save_checkpoint(model, cfg_dict,
+                             os.path.join(ckpt_dir, f"{model_name}_best.pt"), epoch + 1)
 
     # Save Final Checkpoint
-    final_ckpt_path = os.path.join(ckpt_dir, f"{model_name}_final.pt")
-    torch.save({'model_state': model.state_dict(), 'config': cfg_dict, 'epoch': num_epochs}, final_ckpt_path)
-    print(f"Saved final checkpoint: {final_ckpt_path}")
+    _save_checkpoint(model, cfg_dict,
+                     os.path.join(ckpt_dir, f"{model_name}_final.pt"), num_epochs)
 
     trainer.close()
     print("Training finished successfully!")
