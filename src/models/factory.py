@@ -4,7 +4,6 @@ Model Factory for Contact-Sim / Slot-Worldmodel Baselines.
 Provides a unified build_model(cfg) function that instantiates:
   - DETR Bounding-Box / Mask model
   - StoSAVi / SAVi Slot Attention model
-  - Slot-PIDM Model
 
 Enforces a Standardized Model Output Dictionary Contract:
   {
@@ -145,23 +144,6 @@ def build_model(cfg):
         )
         return StandardizedDETRWrapper(base_model)
 
-    elif model_type in ['playslot', 'playslot_savi']:
-        from src.models.playslot_savi import PlaySlotSAVi
-        base_model = PlaySlotSAVi(
-            num_slots=merged_cfg.get('num_slots', 4),
-            slot_dim=merged_cfg.get('slot_dim', 64),
-            num_iterations=merged_cfg.get('num_iterations', 3),
-            num_iterations_first=merged_cfg.get('num_iterations_first', merged_cfg.get('num_iterations', 3)),
-            in_channels=merged_cfg.get('in_channels', 3),
-            mlp_hidden=merged_cfg.get('mlp_hidden', 128),
-            mlp_encoder_dim=merged_cfg.get('mlp_encoder_dim', 128),
-            initializer=merged_cfg.get('initializer', None),
-            encoder=merged_cfg.get('encoder', None),
-            decoder=merged_cfg.get('decoder', None),
-            transition_module_params=merged_cfg.get('transition_module_params', None)
-        )
-        return StandardizedSAViWrapper(base_model)
-
     elif model_type in ['savi', 'stosavi']:
         from src.models.savi import SAVi
         res = tuple(merged_cfg.get('resolution', [64, 64]))
@@ -182,6 +164,5 @@ def build_model(cfg):
         return StandardizedSAViWrapper(base_model)
 
     else:
-        raise ValueError(f"Unknown model type: '{model_type}'. Supported: 'detr', 'savi', 'playslot', 'playslot_savi'.")
-
+        raise ValueError(f"Unknown model type: '{model_type}'. Supported: 'detr', 'savi'.")
 
