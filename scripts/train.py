@@ -15,87 +15,18 @@ import time
 from datetime import timedelta
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import hydra
 from omegaconf import DictConfig, OmegaConf
-
-os.environ['WANDB_MODE'] = 'offline'
-os.environ['WANDB_SILENT'] = 'true'
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from src.models.factory import build_model
-from src.models.detr import HungarianMatcher, SetCriterion, masks_to_boxes_and_labels
+from src.models.detr import HungarianMatcher, SetCriterion
 from src.datasets.factory import build_dataloader
 from src.training.trainer import BaseTrainer
-
-
-def compute_detr_loss(out, gt_masks, criterion, weight_dict):
-    """Computes DETR Hungarian matching loss (classification CE, box L1, box GIoU) using a pre-initialized criterion."""
-    pred_logits = out['pred_logits']
-    pred_boxes = out['pred_boxes']
-
-    if gt_masks is None:
-        raise ValueError("gt_masks is required for training DETR")
-
-    if gt_masks.ndim == 5:
-        B, T, C, H, W = gt_masks.shape
-        gt_masks_flat = gt_masks.view(B * T, C, H, W)
-    else:
-        gt_masks_flat = gt_masks
-
-    targets = masks_to_boxes_and_labels(gt_masks_flat)
-
-    detr_out = {'pred_logits': pred_logits, 'pred_boxes': pred_boxes}
-    losses = criterion(detr_out, targets)
-
-    total_loss = torch.tensor(0.0, device=pred_logits.device)
-    loss_dict = {}
-    for k, v in losses.items():
-        weight_key = k.replace('loss_', '')
-        if weight_key == 'ce':
-            weight_key = 'class'
-        w = weight_dict.get(weight_key, 1.0)
-        total_loss += w * v
-        loss_dict[k] = v.item()
-
-    loss_dict['total_loss'] = total_loss.item()
-    return total_loss, loss_dict
-
-
-def compute_savi_loss(raw_out, gt_masks, weight_dict=None):
-    """Computes SAVi slot attention mask & reconstruction loss."""
-    if weight_dict is None:
-        weight_dict = {'recon': 1.0, 'mask': 1.0, 'kld': 0.001}
-
-    recon_img = raw_out.get('recon_combined', None)
-    post_masks = raw_out.get('post_masks', None)
-    
-    total_loss = 0.0
-    loss_dict = {}
-
-    if recon_img is not None and 'img' in raw_out:
-        target_img = raw_out['img']
-        recon_loss = F.mse_loss(recon_img, target_img)
-        total_loss += weight_dict.get('recon', 1.0) * recon_loss
-        loss_dict['recon_loss'] = recon_loss.item()
-
-    if post_masks is not None and gt_masks is not None:
-        p_masks = post_masks.squeeze(3) if post_masks.ndim == 6 else post_masks
-        if gt_masks.ndim == 5:
-            B, T, C, H, W = gt_masks.shape
-            if p_masks.shape[-2:] != (H, W):
-                p_masks = F.interpolate(p_masks.view(B*T, -1, p_masks.shape[-2], p_masks.shape[-1]), size=(H, W), mode='bilinear', align_corners=False).view(B, T, -1, H, W)
-            
-            mask_bce = F.binary_cross_entropy(torch.clamp(p_masks.max(dim=2)[0], 1e-4, 1-1e-4), (gt_masks.max(dim=2)[0] > 0.5).float())
-            total_loss += weight_dict.get('mask', 1.0) * mask_bce
-            loss_dict['mask_bce'] = mask_bce.item()
-
-    loss_dict['total_loss'] = total_loss.item() if isinstance(total_loss, torch.Tensor) else total_loss
-    return total_loss, loss_dict
+from src.losses import compute_detr_loss, compute_savi_loss
 
 
 @hydra.main(config_path="../configs", config_name="config")
@@ -118,8 +49,6 @@ def main(cfg: DictConfig):
     print("======================================================================")
     print(f"Device: {device}")
     print(f"Checkpoint Directory: {ckpt_dir}")
-
-    writer = trainer.writer
 
     # 1. Build Model via Factory
     model = build_model(cfg_dict).to(device)
@@ -162,7 +91,8 @@ def main(cfg: DictConfig):
 
     # 3. Optimizer
     lr = float(cfg.lr)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    weight_decay = float(cfg.get('weight_decay', 1e-4))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     max_steps = cfg.get('max_steps', None)
     is_dry_run = cfg.get('dry_run', False)
@@ -204,18 +134,18 @@ def main(cfg: DictConfig):
             elif out.get('raw_out') is not None:
                 loss, loss_dict = compute_savi_loss(out['raw_out'], gt_masks, weight_dict=cfg_dict.get('weight_dict', None))
             else:
-                loss = torch.tensor(0.5, device=device, requires_grad=True)
-                loss_dict = {'loss': 0.5}
+                raise ValueError(f"Model output for '{model_name}' has no recognized loss keys. "
+                                 "Expected 'pred_logits'/'pred_boxes' (DETR) or 'raw_out' (SAVi).")
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             train_losses.append(loss.item())
-            writer.add_scalar("Train/Loss", loss.item(), global_step)
+            trainer.log_scalar("Train/Loss", loss.item(), global_step)
             for lk, lv in loss_dict.items():
                 if lk != 'total_loss':
-                    writer.add_scalar(f"Train/{lk}", lv, global_step)
+                    trainer.log_scalar(f"Train/{lk}", lv, global_step)
             global_step += 1
 
             if global_step % 50 == 0 or step == 0:
@@ -248,11 +178,12 @@ def main(cfg: DictConfig):
                 elif v_out.get('raw_out') is not None:
                     v_loss, _ = compute_savi_loss(v_out['raw_out'], v_gt_masks, weight_dict=cfg_dict.get('weight_dict', None))
                 else:
-                    v_loss = torch.tensor(0.5, device=device)
+                    raise ValueError(f"Model output for '{model_name}' has no recognized loss keys. "
+                                     "Expected 'pred_logits'/'pred_boxes' (DETR) or 'raw_out' (SAVi).")
                 val_losses.append(v_loss.item())
 
         avg_val_loss = np.mean(val_losses) if val_losses else avg_train_loss
-        writer.add_scalar("Val/Loss", avg_val_loss, epoch)
+        trainer.log_scalar("Val/Loss", avg_val_loss, epoch)
         print(f"Epoch [{epoch+1}/{num_epochs}] Validation Loss: {avg_val_loss:.4f}")
 
         if avg_val_loss < best_val_loss:
