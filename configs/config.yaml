@@ -1,5 +1,5 @@
 defaults:
-  - model: savi
+  - model: detr
   - dataset: pusht
   - optional experiment: null
   - _self_

@@ -41,11 +41,11 @@ def build_dataset(cfg, split: str = 'train'):
     ds_name = merged_cfg.get('name', merged_cfg.get('type', 'pusht')).lower()
 
     if 'pusht' in ds_name:
-        h5_path = merged_cfg.get('h5_path', '/home/jyuan/.stable-wm/pusht_mask_dataset.h5')
-        if not os.path.exists(h5_path):
-            fallback_path = 'scratch/pusht_mask_dataset.h5'
-            if os.path.exists(fallback_path):
-                h5_path = fallback_path
+        from src.utils.data_utils import find_dataset_path
+        h5_path = find_dataset_path(
+            merged_cfg.get('h5_path', '/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5'),
+            default_filename='pusht_expert_train_64x64.h5'
+        )
 
         resolution = tuple(merged_cfg.get('resolution', (64, 64)))
         n_sample_frames = merged_cfg.get('n_sample_frames', merged_cfg.get('seq_len', 6))
@@ -98,5 +98,6 @@ def build_dataloader(cfg, split: str = 'train', batch_size: int = None, num_work
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
+        persistent_workers=(num_workers > 0),
         drop_last=(split == 'train')
     )

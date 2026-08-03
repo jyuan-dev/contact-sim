@@ -15,7 +15,6 @@ def find_dataset_path(h5_path: str, default_filename: str = "pusht_expert_train_
     
     alt_paths = [
         os.path.expanduser(f"~/.stable-wm/{default_filename}"),
-        os.path.expanduser("~/.stable-wm/pusht_expert_train_enriched.h5"),
         os.path.join("scratch", default_filename),
         os.path.join(REPO_ROOT, "scratch", default_filename),
     ]

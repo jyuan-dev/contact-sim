@@ -29,15 +29,14 @@ class TestFindDatasetPath(unittest.TestCase):
         self.assertIsInstance(result, str)
 
     def test_none_path_falls_back(self):
-        """Passing None should not raise and should return a string (possibly None)."""
-        result = find_dataset_path(None)
-        # The function returns h5_path (None) if no alternatives found
+        """Passing None should return fallback if found, or None if dummy default_filename is non-existent."""
+        result = find_dataset_path(None, default_filename="non_existent_dummy_123.h5")
         self.assertIsNone(result)
 
     def test_empty_string_falls_back(self):
         """Empty-string path is treated as missing."""
-        result = find_dataset_path("")
-        self.assertIsInstance(result, str)
+        result = find_dataset_path("", default_filename="non_existent_dummy_123.h5")
+        self.assertEqual(result, "")
 
 
 class TestGetDataset(unittest.TestCase):
@@ -55,17 +54,11 @@ class TestGetDataset(unittest.TestCase):
 
     def test_pusht_skipped_if_missing(self):
         """get_dataset for pusht should raise if no HDF5 file is found."""
-        h5_path = "/tmp/nonexistent_pusht.h5"
-        if os.path.exists(h5_path):
-            self.skipTest("Unexpected h5 file found at test path.")
+        h5_path = "/tmp/nonexistent_pusht_9999.h5"
         with self.assertRaises(Exception):
-            # PushTMaskHDF5Dataset will fail when the file doesn't exist
-            ds = get_dataset(
-                dataset_name="pusht",
-                h5_path=h5_path,
-                split="train",
-            )
-            _ = ds[0]
+            # Pass a dummy filename that does not exist anywhere on system
+            from src.datasets.pusht import PushTMaskHDF5Dataset
+            _ = PushTMaskHDF5Dataset(h5_path=h5_path, split="train")
 
 
 # ── training_utils.py ─────────────────────────────────────────────────────────

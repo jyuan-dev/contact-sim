@@ -82,12 +82,17 @@ def main(cfg: DictConfig):
     start_time = time.time()
     total_target_steps = max_steps if max_steps is not None else (num_epochs * len(train_loader))
 
+    use_amp = (device.type == 'cuda')
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+
     def _step(batch):
         """Single forward + loss step. Returns (loss, loss_dict) on device."""
         video = batch['img']
         video = video.to(device, non_blocking=True)
-        out = model(video)
-        return model.compute_loss(out, batch)
+        with torch.amp.autocast('cuda', enabled=use_amp):
+            out = model(video)
+            loss, loss_dict = model.compute_loss(out, batch)
+        return loss, loss_dict
 
     # 4. Training Loop
     for epoch in range(num_epochs):
@@ -109,9 +114,11 @@ def main(cfg: DictConfig):
 
             optimizer.zero_grad()
             loss, loss_dict = _step(batch)
-            loss.backward()
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
 
             loss_val = loss.item()
             train_losses.append(loss_val)

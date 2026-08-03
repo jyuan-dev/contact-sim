@@ -263,9 +263,15 @@ class HungarianMatcher(nn.Module):
         
         out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [B * Q, num_classes + 1]
         out_bbox = outputs["pred_boxes"].flatten(0, 1)              # [B * Q, 4]
+        device = out_prob.device
 
-        tgt_ids = torch.cat([v["labels"] for v in targets])
-        tgt_bbox = torch.cat([v["boxes"] for v in targets])
+        total_tgt = sum(len(v["labels"]) for v in targets)
+        if total_tgt == 0:
+            tgt_ids = torch.empty((0,), dtype=torch.long, device=device)
+            tgt_bbox = torch.empty((0, 4), dtype=torch.float32, device=device)
+        else:
+            tgt_ids = torch.cat([v["labels"].to(device) for v in targets])
+            tgt_bbox = torch.cat([v["boxes"].to(device) for v in targets])
 
         cost_class = -out_prob[:, tgt_ids]
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
@@ -302,7 +308,10 @@ class SetCriterion(nn.Module):
     def loss_labels(self, outputs, targets, indices, num_boxes):
         src_logits = outputs['pred_logits']
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        if sum(len(J) for _, J in indices) == 0:
+            target_classes_o = torch.empty((0,), dtype=torch.int64, device=src_logits.device)
+        else:
+            target_classes_o = torch.cat([t["labels"][J].to(src_logits.device) for t, (_, J) in zip(targets, indices)])
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
@@ -313,7 +322,10 @@ class SetCriterion(nn.Module):
     def loss_boxes(self, outputs, targets, indices, num_boxes):
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs['pred_boxes'][idx]
-        target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        if sum(len(i) for _, i in indices) == 0:
+            target_boxes = torch.empty((0, 4), dtype=torch.float32, device=src_boxes.device)
+        else:
+            target_boxes = torch.cat([t['boxes'][i].to(src_boxes.device) for t, (_, i) in zip(targets, indices)], dim=0)
 
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction='none')
         loss_bbox_mean = loss_bbox.sum() / num_boxes
