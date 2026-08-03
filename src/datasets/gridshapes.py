@@ -12,17 +12,11 @@ Conforms to standard dataset dict contract:
   }
 """
 
-import os
-import sys
 import random
 import numpy as np
 import cv2
 import torch
 from torch.utils.data import Dataset
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 COLOR_RGB_DICT = {
     "red": (255, 0, 0),
@@ -143,6 +137,5 @@ class GridShapesDataset(Dataset):
         return {
             'data_idx': idx,
             'img': img_tensor,
-            'video': img_tensor,
             'gt_masks': gt_masks_tensor
         }

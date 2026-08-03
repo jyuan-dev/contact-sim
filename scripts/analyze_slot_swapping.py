@@ -7,7 +7,6 @@ Usage:
   python scripts/analyze_slot_swapping.py model=detr dataset=pusht ckpt_path=/home/jyuan/.stable-wm/detr_pusht/detr_final.pt
 """
 
-import sys
 import os
 import json
 import yaml
@@ -23,12 +22,10 @@ from scipy.optimize import linear_sum_assignment
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-
 from src.models.factory import build_model
 from src.datasets.pusht import PushTMaskHDF5Dataset
+from src.metrics.evaluator import compute_binary_iou_dice, EvaluationSuite
+from src.utils.training_utils import get_device
 
 CLASS_NAMES = {0: "Block", 1: "Agent", 2: "Goal"}
 
@@ -56,22 +53,11 @@ GT_COLORS_RGB = {
 }
 
 
-def compute_binary_iou(pred_mask, gt_mask, thresh=0.3):
-    pred_bin = (pred_mask > thresh).astype(np.float32)
-    gt_bin = (gt_mask > 0.5).astype(np.float32)
-    if gt_bin.shape != pred_bin.shape:
-        gt_bin = cv2.resize(gt_bin, (pred_bin.shape[1], pred_bin.shape[0]), interpolation=cv2.INTER_NEAREST)
-
-    intersection = np.logical_and(pred_bin, gt_bin).sum()
-    union = np.logical_or(pred_bin, gt_bin).sum()
-    return float(intersection / union) if union > 0 else 0.0
-
-
 @hydra.main(config_path="../configs", config_name="config", version_base=None)
 def main(cfg: DictConfig):
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = get_device()
 
     ckpt_path = cfg.get('ckpt_path', None) or cfg.get('ckpt', None) or "/home/jyuan/.stable-wm/savi_mask_detr/savi_epoch_8.pt"
     ep_idx = cfg.get('ep_idx', 6)
@@ -145,7 +131,7 @@ def main(cfg: DictConfig):
         cost_matrix = np.zeros((K, 3), dtype=np.float32)
         for k in range(K):
             for c in range(3):
-                iou = compute_binary_iou(pred_masks_np[t, k], gt_masks_dict[c][t])
+                iou, _ = compute_binary_iou_dice(pred_masks_np[t, k], gt_masks_dict[c][t])
                 cost_matrix[k, c] = -iou
 
         row_ind, col_ind = linear_sum_assignment(cost_matrix)

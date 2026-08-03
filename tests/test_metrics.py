@@ -5,14 +5,8 @@ Covers: compute_psnr, compute_ssim, compute_fg_ari, compute_latent_std,
 """
 
 import unittest
-import os
-import sys
 import numpy as np
 import torch
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 from src.metrics.eval_metrics import (
     compute_psnr,

@@ -7,24 +7,19 @@ Usage:
   python scripts/eval.py model=detr dataset=pusht ckpt_path=/home/jyuan/.stable-wm/detr_pusht/detr_final.pt
 """
 
-import sys
 import os
 import json
 import numpy as np
 import torch
-import torch.nn.functional as F
 import cv2
 import imageio
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-
 from src.models.factory import build_model
 from src.datasets.factory import build_dataloader
 from src.metrics.evaluator import EvaluationSuite
+from src.utils.training_utils import get_device
 
 SLOT_COLORS_RGB = {
     0: (255, 40, 40),     # Slot 0: Red
@@ -45,7 +40,7 @@ GT_COLORS_RGB = {
 def main(cfg: DictConfig):
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = get_device()
 
     ckpt_path = cfg.get('ckpt_path', None) or cfg.get('ckpt', None)
     model_name = cfg.model.name
@@ -78,7 +73,7 @@ def main(cfg: DictConfig):
     evaluator = EvaluationSuite(num_classes=3)
     batch = next(iter(val_loader))
 
-    imgs_torch = batch['img'] if 'img' in batch else batch['video']
+    imgs_torch = batch['img']
     imgs_torch = imgs_torch.to(device)
     gt_masks = batch.get('gt_masks', None)
     if gt_masks is not None:

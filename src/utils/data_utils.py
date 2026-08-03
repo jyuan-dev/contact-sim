@@ -3,7 +3,6 @@ Dataset loading and path resolution utilities.
 """
 
 import os
-import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

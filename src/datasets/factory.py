@@ -7,13 +7,8 @@ Provides unified factory functions:
 """
 
 import os
-import sys
 import torch
 from torch.utils.data import DataLoader
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 from src.datasets.pusht import PushTMaskHDF5Dataset
 from src.datasets.gridshapes import GridShapesDataset

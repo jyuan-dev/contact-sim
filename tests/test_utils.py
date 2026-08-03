@@ -5,13 +5,8 @@ Covers: find_dataset_path, get_dataset (stub), set_seed, cosine_anneal_with_warm
 
 import unittest
 import os
-import sys
 import math
 import torch
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 from src.utils.data_utils import find_dataset_path, get_dataset
 from src.utils.training_utils import set_seed, cosine_anneal_with_warmup, get_device

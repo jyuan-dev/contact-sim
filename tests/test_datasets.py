@@ -1,11 +1,6 @@
 import unittest
 import os
-import sys
 import torch
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 from src.datasets.factory import build_dataset, build_dataloader
 from src.datasets.pusht import PushTMaskHDF5Dataset, normalize_img, denormalize_img, augment_background
@@ -51,7 +46,7 @@ class TestGridShapesDataset(unittest.TestCase):
     def test_output_keys(self):
         """Each sample should have img, gt_masks, video, and data_idx."""
         sample = self.ds[0]
-        for key in ('img', 'gt_masks', 'video', 'data_idx'):
+        for key in ('img', 'gt_masks', 'data_idx'):
             self.assertIn(key, sample)
 
     def test_image_shape(self):
