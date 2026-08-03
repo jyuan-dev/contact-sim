@@ -33,11 +33,8 @@ from src.datasets.factory import build_dataloader
 from src.training.trainer import BaseTrainer
 
 
-def compute_detr_loss(out, gt_masks, weight_dict=None):
-    """Computes DETR Hungarian matching loss (classification CE, box L1, box GIoU)."""
-    if weight_dict is None:
-        weight_dict = {'class': 1.0, 'bbox': 5.0, 'giou': 2.0}
-
+def compute_detr_loss(out, gt_masks, criterion, weight_dict):
+    """Computes DETR Hungarian matching loss (classification CE, box L1, box GIoU) using a pre-initialized criterion."""
     pred_logits = out['pred_logits']
     pred_boxes = out['pred_boxes']
 
@@ -51,20 +48,6 @@ def compute_detr_loss(out, gt_masks, weight_dict=None):
         gt_masks_flat = gt_masks
 
     targets = masks_to_boxes_and_labels(gt_masks_flat)
-
-    matcher = HungarianMatcher(
-        cost_class=weight_dict.get('class', 1.0),
-        cost_bbox=weight_dict.get('bbox', 5.0),
-        cost_giou=weight_dict.get('giou', 2.0)
-    )
-    num_classes = pred_logits.shape[-1] - 1
-    criterion = SetCriterion(
-        num_classes=num_classes,
-        matcher=matcher,
-        weight_dict=weight_dict,
-        eos_coef=0.1,
-        losses=['labels', 'boxes']
-    ).to(pred_logits.device)
 
     detr_out = {'pred_logits': pred_logits, 'pred_boxes': pred_boxes}
     losses = criterion(detr_out, targets)
@@ -142,6 +125,27 @@ def main(cfg: DictConfig):
     model = build_model(cfg_dict).to(device)
     print(f"Model '{model_name}' instantiated successfully via factory!")
 
+    # Pre-initialize matcher and criterion if using DETR to avoid redundant allocations
+    detr_criterion = None
+    detr_w = None
+    if 'detr' in model_name:
+        detr_w = cfg_dict.get('model', {}).get('weight_dict', {'class': 1.0, 'bbox': 5.0, 'giou': 2.0})
+        # Extract underlying model from StandardizedDETRWrapper if wrapped
+        target_model = model.model if hasattr(model, 'model') else model
+        num_classes = target_model.class_embed.out_features - 1
+        matcher = HungarianMatcher(
+            cost_class=detr_w.get('class', 1.0),
+            cost_bbox=detr_w.get('bbox', 5.0),
+            cost_giou=detr_w.get('giou', 2.0)
+        )
+        detr_criterion = SetCriterion(
+            num_classes=num_classes,
+            matcher=matcher,
+            weight_dict=detr_w,
+            eos_coef=0.1,
+            losses=['labels', 'boxes']
+        ).to(device)
+
     # 2. Build Dataloaders via Factory
     batch_size = cfg.batch_size
     num_workers = cfg.get('num_workers', 4)
@@ -196,8 +200,7 @@ def main(cfg: DictConfig):
             out = model(video)
 
             if out.get('pred_logits') is not None and out.get('pred_boxes') is not None:
-                model_w = cfg_dict.get('model', {}).get('weight_dict', cfg_dict.get('weight_dict', None))
-                loss, loss_dict = compute_detr_loss(out, gt_masks, weight_dict=model_w)
+                loss, loss_dict = compute_detr_loss(out, gt_masks, detr_criterion, detr_w)
             elif out.get('raw_out') is not None:
                 loss, loss_dict = compute_savi_loss(out['raw_out'], gt_masks, weight_dict=cfg_dict.get('weight_dict', None))
             else:
@@ -241,8 +244,7 @@ def main(cfg: DictConfig):
                 v_gt_masks = v_batch['gt_masks'].to(device) if 'gt_masks' in v_batch else None
                 v_out = model(v_video)
                 if v_out.get('pred_logits') is not None and v_out.get('pred_boxes') is not None:
-                    model_w = cfg_dict.get('model', {}).get('weight_dict', cfg_dict.get('weight_dict', None))
-                    v_loss, _ = compute_detr_loss(v_out, v_gt_masks, weight_dict=model_w)
+                    v_loss, _ = compute_detr_loss(v_out, v_gt_masks, detr_criterion, detr_w)
                 elif v_out.get('raw_out') is not None:
                     v_loss, _ = compute_savi_loss(v_out['raw_out'], v_gt_masks, weight_dict=cfg_dict.get('weight_dict', None))
                 else:

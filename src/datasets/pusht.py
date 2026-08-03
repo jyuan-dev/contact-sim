@@ -54,8 +54,8 @@ class PushTMaskHDF5Dataset(Dataset):
         self.frame_offset = frame_offset
 
         with h5py.File(h5_path, 'r') as f:
-            ep_lens = np.array(f['ep_len'])
-            ep_offs = np.array(f['ep_offset'])
+            ep_lens = f['ep_len'][:]
+            ep_offs = f['ep_offset'][:]
 
         self._ep_lens = ep_lens.tolist()
         self._ep_offs = ep_offs.tolist()

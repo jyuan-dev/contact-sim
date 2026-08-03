@@ -8,6 +8,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from src.models.detr import DETR, ResNetBackbone, Transformer
+from src.models.savi import SAVi
 from src.models.playslot_savi import PlaySlotSAVi
 from src.models.factory import build_model
 
@@ -39,7 +40,7 @@ class TestModels(unittest.TestCase):
         self.assertEqual(outputs['pred_logits'].shape, (2, 5, 4))
         self.assertEqual(outputs['pred_boxes'].shape, (2, 5, 4))
 
-    def test_savi_forward(self):
+    def test_playslot_forward(self):
         """Test instantiation and a dummy forward pass of the PlaySlotSAVi model."""
         model = PlaySlotSAVi(
             num_slots=4,
@@ -55,8 +56,22 @@ class TestModels(unittest.TestCase):
         self.assertIn('post_masks', outputs)
         self.assertIn('slots', outputs)
 
+    def test_savi_forward(self):
+        """Test instantiation and a dummy forward pass of standard SAVi model."""
+        model = SAVi(
+            resolution=(64, 64),
+            clip_len=3,
+            num_slots=4,
+            slot_dim=64,
+            num_iterations=2
+        )
+        dummy_input = torch.randn(2, 3, 3, 64, 64)
+        outputs = model(dummy_input)
+        self.assertIn('post_masks', outputs)
+        self.assertIn('post_recon_combined', outputs)
+
     def test_factory_build_model(self):
-        """Test building DETR and SAVi models via unified build_model factory."""
+        """Test building DETR, SAVi, and PlaySlot models via unified build_model factory."""
         detr_cfg = {'model': {'name': 'detr', 'num_classes': 3, 'num_queries': 5}}
         detr_model = build_model(detr_cfg)
         self.assertIsNotNone(detr_model)
@@ -64,6 +79,10 @@ class TestModels(unittest.TestCase):
         savi_cfg = {'model': {'name': 'savi', 'num_slots': 4}}
         savi_model = build_model(savi_cfg)
         self.assertIsNotNone(savi_model)
+
+        playslot_cfg = {'model': {'name': 'playslot', 'num_slots': 4}}
+        playslot_model = build_model(playslot_cfg)
+        self.assertIsNotNone(playslot_model)
 
 
 if __name__ == '__main__':

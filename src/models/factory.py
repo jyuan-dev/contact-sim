@@ -145,7 +145,7 @@ def build_model(cfg):
         )
         return StandardizedDETRWrapper(base_model)
 
-    elif 'savi' in model_type or 'slot' in model_type:
+    elif model_type in ['playslot', 'playslot_savi']:
         from src.models.playslot_savi import PlaySlotSAVi
         base_model = PlaySlotSAVi(
             num_slots=merged_cfg.get('num_slots', 4),
@@ -162,6 +162,26 @@ def build_model(cfg):
         )
         return StandardizedSAViWrapper(base_model)
 
+    elif model_type in ['savi', 'stosavi']:
+        from src.models.savi import SAVi
+        res = tuple(merged_cfg.get('resolution', [64, 64]))
+        clip_len = merged_cfg.get('n_sample_frames', merged_cfg.get('clip_len', 6))
+        base_model = SAVi(
+            resolution=res,
+            clip_len=clip_len,
+            num_slots=merged_cfg.get('num_slots', 4),
+            slot_dim=merged_cfg.get('slot_dim', 64),
+            num_iterations=merged_cfg.get('num_iterations', 3),
+            in_channels=merged_cfg.get('in_channels', 3),
+            slot_dict=merged_cfg.get('slot_dict', None),
+            enc_dict=merged_cfg.get('enc_dict', None),
+            dec_dict=merged_cfg.get('dec_dict', None),
+            pred_dict=merged_cfg.get('pred_dict', None),
+            loss_dict=merged_cfg.get('loss_dict', None)
+        )
+        return StandardizedSAViWrapper(base_model)
+
     else:
-        raise ValueError(f"Unknown model type: '{model_type}'. Supported: 'detr', 'savi', 'playslot_savi'.")
+        raise ValueError(f"Unknown model type: '{model_type}'. Supported: 'detr', 'savi', 'playslot', 'playslot_savi'.")
+
 

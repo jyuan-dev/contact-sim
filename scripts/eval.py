@@ -92,10 +92,33 @@ def main(cfg: DictConfig):
         out = model(imgs_torch)
 
     pred_masks = out.get('pred_masks', None)
+    pred_boxes = out.get('pred_boxes', None)
+    pred_logits = out.get('pred_logits', None)
+    T = imgs_torch.shape[1] if imgs_torch.ndim == 5 else 1
+
     if pred_masks is not None:
         pred_masks_np = pred_masks[0].cpu().numpy()
+    elif pred_boxes is not None and pred_logits is not None:
+        # Convert DETR box predictions to slot-like binary masks for standard evaluation path
+        Q = pred_boxes.shape[1]
+        pred_masks_np = np.zeros((T, Q, 64, 64), dtype=np.float32)
+        
+        pred_classes = pred_logits.argmax(dim=-1).cpu().numpy()
+        pred_boxes_np = pred_boxes.cpu().numpy()
+        num_classes_detr = pred_logits.shape[-1] - 1
+        
+        for t_idx in range(min(T, pred_boxes_np.shape[0])):
+            for q in range(Q):
+                cls_id = pred_classes[t_idx, q]
+                if cls_id < num_classes_detr:
+                    cx, cy, w, h = pred_boxes_np[t_idx, q]
+                    x0 = int(np.clip((cx - 0.5 * w) * 64, 0, 64))
+                    y0 = int(np.clip((cy - 0.5 * h) * 64, 0, 64))
+                    x1 = int(np.clip((cx + 0.5 * w) * 64, 0, 64))
+                    y1 = int(np.clip((cy + 0.5 * h) * 64, 0, 64))
+                    if x1 > x0 and y1 > y0:
+                        pred_masks_np[t_idx, q, y0:y1, x0:x1] = 1.0
     else:
-        T = imgs_torch.shape[1] if imgs_torch.ndim == 5 else 1
         pred_masks_np = np.zeros((T, 4, 64, 64), dtype=np.float32)
 
     # 4. Evaluate Metrics
@@ -141,26 +164,45 @@ def main(cfg: DictConfig):
                     color_bgr = GT_COLORS_RGB.get(m_idx, (255, 255, 255))
                     cv2.drawContours(p_gt, contours, -1, color_bgr, 1)
 
-        # Right Panel: Pure Slot Mask Overlay
+        # Right Panel: Pure Slot Mask Overlay or Bounding Box Overlay for DETR
         p_slots = frame_rgb.copy().astype(np.float32)
         masks_t = pred_masks_np[t]
         K = masks_t.shape[0]
 
-        slot_map = np.zeros((64, 64, 3), dtype=np.float32)
-        weight_sum = np.zeros((64, 64, 1), dtype=np.float32)
-        for k in range(K):
-            m_k = np.clip(masks_t[k], 0, 1)[..., None]
-            color_k = np.array(SLOT_COLORS_RGB[k % len(SLOT_COLORS_RGB)], dtype=np.float32)
-            slot_map += m_k * color_k
-            weight_sum += m_k
+        if pred_boxes is not None and pred_logits is not None:
+            pred_classes = pred_logits.argmax(dim=-1).cpu().numpy()
+            pred_boxes_np = pred_boxes.cpu().numpy()
+            num_classes_detr = pred_logits.shape[-1] - 1
+            
+            p_slots_uint8 = frame_rgb.copy()
+            t_idx = min(t, pred_boxes_np.shape[0] - 1)
+            for q in range(K):
+                cls_id = pred_classes[t_idx, q]
+                if cls_id < num_classes_detr:
+                    cx, cy, w, h = pred_boxes_np[t_idx, q]
+                    x0 = int(np.clip((cx - 0.5 * w) * 64, 0, 64))
+                    y0 = int(np.clip((cy - 0.5 * h) * 64, 0, 64))
+                    x1 = int(np.clip((cx + 0.5 * w) * 64, 0, 64))
+                    y1 = int(np.clip((cy + 0.5 * h) * 64, 0, 64))
+                    color_k = SLOT_COLORS_RGB[q % len(SLOT_COLORS_RGB)]
+                    cv2.rectangle(p_slots_uint8, (x0, y0), (x1, y1), color_k, 1)
+                    cls_name = {0: "B", 1: "A", 2: "G"}.get(cls_id, str(cls_id))
+                    cv2.putText(p_slots_uint8, cls_name, (x0 + 2, y0 + 8), cv2.FONT_HERSHEY_SIMPLEX, 0.25, color_k, 1, cv2.LINE_AA)
+        else:
+            slot_map = np.zeros((64, 64, 3), dtype=np.float32)
+            weight_sum = np.zeros((64, 64, 1), dtype=np.float32)
+            for k in range(K):
+                m_k = np.clip(masks_t[k], 0, 1)[..., None]
+                color_k = np.array(SLOT_COLORS_RGB[k % len(SLOT_COLORS_RGB)], dtype=np.float32)
+                slot_map += m_k * color_k
+                weight_sum += m_k
 
-        weight_sum = np.maximum(weight_sum, 1e-6)
-        slot_composite = slot_map / weight_sum
-        active_mask = (weight_sum > 0.15)
-        alpha = 0.60
-        p_slots[active_mask[:, :, 0]] = (1.0 - alpha) * p_slots[active_mask[:, :, 0]] + alpha * slot_composite[active_mask[:, :, 0]]
-
-        p_slots_uint8 = np.clip(p_slots, 0, 255).astype(np.uint8)
+            weight_sum = np.maximum(weight_sum, 1e-6)
+            slot_composite = slot_map / weight_sum
+            active_mask = (weight_sum > 0.15)
+            alpha = 0.60
+            p_slots[active_mask[:, :, 0]] = (1.0 - alpha) * p_slots[active_mask[:, :, 0]] + alpha * slot_composite[active_mask[:, :, 0]]
+            p_slots_uint8 = np.clip(p_slots, 0, 255).astype(np.uint8)
 
         combined = np.hstack([p_gt, p_slots_uint8])
         combined_large = cv2.resize(combined, (480, 240), interpolation=cv2.INTER_NEAREST)
