@@ -4,39 +4,17 @@ type: "savi"
 resolution: [64, 64]
 n_sample_frames: 6
 
+# Paper-aligned defaults: the SAVi wrapper provides correct defaults
+# (num_iterations=3, enc_channels=[3,64,64,64,64], pred_type='transformer',
+#  pred_rnn=True, kld_method='none'). Only override what differs.
+
 slot_dict:
   num_slots: 4
   slot_size: 64
-  slot_mlp_size: 128
-  num_iterations: 2
-  kernel_mlp: false
-
-enc_dict:
-  enc_channels: [3, 16, 16, 16, 16]
-  enc_ks: 5
-  enc_out_channels: 32
-  enc_norm: ""
-
-dec_dict:
-  dec_channels: [64, 16, 16, 16, 16]
-  dec_resolution: [8, 8]
-  dec_ks: 5
-  dec_norm: ""
-
-pred_dict:
-  pred_type: "mlp"
-  pred_rnn: false
-  pred_norm_first: true
-  pred_num_layers: 2
-  pred_num_heads: 4
-  pred_ffn_dim: 256
-  pred_sg_every: null
 
 loss_dict:
-  use_post_recon_loss: true
-  kld_method: "var-0.01"
+  kld_method: "none"
 
 weight_dict:
   recon: 1.0
   mask: 1.0
-  kld: 0.0001

@@ -1,4 +1,5 @@
 import math
+import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -65,34 +66,51 @@ class PositionEmbeddingSine(nn.Module):
 
 # ── 2. Transformer Components ─────────────────────────────────────────────────
 class Transformer(nn.Module):
-    """Transformer Encoder-Decoder."""
-    def __init__(self, d_model=128, nhead=4, num_encoder_layers=3, num_decoder_layers=3, dim_feedforward=512, dropout=0.1):
+    """Transformer Encoder-Decoder with intermediate decoder layer outputs.
+
+    Returns stacked outputs from all decoder layers — required for DETR's
+    auxiliary decoding losses (Carion et al., 2020).
+    """
+
+    def __init__(self, d_model=128, nhead=4, num_encoder_layers=3, num_decoder_layers=3,
+                 dim_feedforward=512, dropout=0.1):
         super().__init__()
         self.d_model = d_model
-        
+        self.num_decoder_layers = num_decoder_layers
+
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout, activation="relu"
+            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward,
+            dropout=dropout, activation="relu", batch_first=False,
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_encoder_layers)
 
         decoder_layer = nn.TransformerDecoderLayer(
-            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout, activation="relu"
+            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward,
+            dropout=dropout, activation="relu", batch_first=False,
         )
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_decoder_layers)
+        self.decoder_layers = nn.ModuleList([copy.deepcopy(decoder_layer)
+                                              for _ in range(num_decoder_layers)])
 
     def forward(self, src, pos_embed, query_embed):
-        # src: [HW, B, C]
-        # pos_embed: [HW, B, C]
-        # query_embed: [num_queries, C]
+        # src: [HW, B, C]; pos_embed: [HW, B, C]; query_embed: [num_queries, C]
         HW, B, C = src.shape
         num_queries = query_embed.shape[0]
-        
+
         tgt = torch.zeros(num_queries, B, self.d_model, device=src.device)
         query_embed_expanded = query_embed.unsqueeze(1).expand(-1, B, -1)
 
         memory = self.encoder(src + pos_embed)
-        out = self.decoder(tgt + query_embed_expanded, memory + pos_embed)
-        return out
+        mem_with_pos = memory + pos_embed
+
+        # Manually iterate decoder layers to collect intermediate outputs
+        output = tgt + query_embed_expanded
+        all_outputs = []
+        for layer in self.decoder_layers:
+            output = layer(output, mem_with_pos)
+            all_outputs.append(output)
+
+        # [num_decoder_layers, num_queries, B, d_model]
+        return torch.stack(all_outputs, dim=0)
 
 
 class MLP(nn.Module):
@@ -128,19 +146,24 @@ class DETR(nn.Module):
         # x: [B, 3, H, W]
         features = self.backbone(x)
         src = self.input_proj(features)
-        
+
         pos = PositionEmbeddingSine(self.transformer.d_model // 2)(src)
-        
+
         src_flat = src.flatten(2).permute(2, 0, 1)
         pos_flat = pos.flatten(2).permute(2, 0, 1)
         query_embed = self.query_embed.weight
-        
+
+        # hs: [num_decoder_layers, num_queries, B, d_model]
         hs = self.transformer(src_flat, pos_flat, query_embed)
-        hs = hs.permute(1, 0, 2)
-        
-        outputs_class = self.class_embed(hs)
-        outputs_coord = self.bbox_embed(hs).sigmoid()
-        
+
+        # Apply shared FFN heads to every decoder layer output
+        # (same class_embed/bbox_embed for all layers, per DETR paper)
+        hs_flat = hs.permute(2, 0, 1, 3)  # [B, num_layers, num_queries, d_model]
+        B, L, Q, D = hs_flat.shape
+
+        outputs_class = self.class_embed(hs_flat)      # [B, L, Q, num_classes+1]
+        outputs_coord = self.bbox_embed(hs_flat).sigmoid()  # [B, L, Q, 4]
+
         return {'pred_logits': outputs_class, 'pred_boxes': outputs_coord}
 
 
@@ -308,15 +331,42 @@ class SetCriterion(nn.Module):
         return batch_idx, src_idx
 
     def forward(self, outputs, targets):
-        indices = self.matcher(outputs, targets)
-        num_boxes = sum(len(t["labels"]) for t in targets)
-        num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
-        num_boxes = torch.clamp(num_boxes, min=1).item()
+        """Compute losses for all decoder layers (auxiliary losses per DETR paper).
+
+        outputs['pred_logits'] is [B, L, Q, C+1] (L = num decoder layers).
+        The last layer is treated as the primary output; earlier layers are aux.
+        """
+        pred_logits = outputs['pred_logits']
+        pred_boxes = outputs['pred_boxes']
+
+        if pred_logits.ndim == 4:
+            B, L, Q, C = pred_logits.shape
+        else:
+            B, Q, C = pred_logits.shape
+            L = 1
 
         losses = {}
-        for loss in self.losses:
-            if loss == 'labels':
-                losses.update(self.loss_labels(outputs, targets, indices, num_boxes))
-            elif loss == 'boxes':
-                losses.update(self.loss_boxes(outputs, targets, indices, num_boxes))
+        for layer in range(L):
+            if L > 1:
+                layer_out = {'pred_logits': pred_logits[:, layer], 'pred_boxes': pred_boxes[:, layer]}
+            else:
+                layer_out = {'pred_logits': pred_logits, 'pred_boxes': pred_boxes}
+
+            indices = self.matcher(layer_out, targets)
+            num_boxes = sum(len(t["labels"]) for t in targets)
+            num_boxes_t = torch.as_tensor([num_boxes], dtype=torch.float,
+                                          device=pred_logits.device)
+            num_boxes_val = torch.clamp(num_boxes_t, min=1).item()
+
+            suffix = f'_aux_{layer}' if layer < L - 1 else ''
+            for loss in self.losses:
+                if loss == 'labels':
+                    l = self.loss_labels(layer_out, targets, indices, num_boxes_val)
+                elif loss == 'boxes':
+                    l = self.loss_boxes(layer_out, targets, indices, num_boxes_val)
+                else:
+                    continue
+                for k, v in l.items():
+                    losses[f'{k}{suffix}'] = v
+
         return losses

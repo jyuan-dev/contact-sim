@@ -14,14 +14,17 @@ from src.models.detr import masks_to_boxes_and_labels
 
 def compute_detr_loss(out, gt_masks, criterion, weight_dict):
     """
-    Computes DETR Hungarian matching loss (classification CE, box L1, box GIoU)
-    using a pre-initialized SetCriterion.
+    Computes DETR Hungarian matching loss with auxiliary decoding losses.
+
+    Supports 3D logits [B, Q, C] (single layer, backward-compat) and 4D logits
+    [B, L, Q, C] (multi-layer with aux losses per DETR paper).
 
     Args:
         out (dict): Model output with keys 'pred_logits' and 'pred_boxes'.
         gt_masks (Tensor): Ground-truth masks [B, C, H, W] or [B, T, C, H, W].
         criterion (SetCriterion): Pre-initialized DETR loss criterion.
-        weight_dict (dict): Per-loss-term weights, e.g. {'class': 1.0, 'bbox': 5.0, 'giou': 2.0}.
+        weight_dict (dict): Per-loss-term weights. For aux layers, keys like
+            'class_aux', 'bbox_aux', 'giou_aux' override the main weights.
 
     Returns:
         total_loss (Tensor): Weighted scalar loss.
@@ -47,10 +50,21 @@ def compute_detr_loss(out, gt_masks, criterion, weight_dict):
     total_loss = torch.tensor(0.0, device=pred_logits.device)
     loss_dict = {}
     for k, v in losses.items():
-        weight_key = k.replace('loss_', '')
-        if weight_key == 'ce':
-            weight_key = 'class'
-        w = weight_dict.get(weight_key, 1.0)
+        # Map criterion keys to weight-dict keys: 'loss_ce_aux_0' → 'class_aux'
+        #                                       'loss_ce'       → 'class'
+        base = k.replace('loss_', '')  # e.g. 'ce_aux_0', 'ce', 'bbox', 'giou'
+        if base.startswith('ce'):
+            base = 'class' + base[2:]  # 'class_aux_0' or 'class'
+
+        if '_aux_' in base:
+            # Try specific aux weight first, then generic aux weight, then main weight
+            w = weight_dict.get(base, weight_dict.get('class_aux' if 'class' in base else
+                                                       'bbox_aux' if 'bbox' in base else
+                                                       'giou_aux' if 'giou' in base else
+                                                       base.split('_aux_')[0], 1.0))
+        else:
+            w = weight_dict.get(base, 1.0)
+
         total_loss += w * v
         loss_dict[k] = v.item()
 

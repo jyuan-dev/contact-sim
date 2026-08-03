@@ -53,25 +53,41 @@ class StandardizedDETRWrapper(nn.Module):
     def forward(self, x):
         """Forward pass. Input: [B, C, H, W] or [B, T, C, H, W]."""
         x_in = _flatten_video(x)
-        # Resize to 224x224 if using pretrained ResNet (otherwise skip for speed)
-        if x_in.shape[-2:] != (224, 224) and any(p.requires_grad for p in self.model.backbone.parameters()):
-            # Only resize if backbone is actually trained/frozen-ImageNet
-            pass  # skip resize for random-init backbone
 
         raw_out = self.model(x_in)
+
+        # Extract last decoder layer for the standardized contract (eval/metrics).
+        # raw_out['pred_logits'] is [B, L, Q, C] (multi-layer) or [B, Q, C] (single).
+        pred_logits = raw_out['pred_logits']
+        pred_boxes = raw_out['pred_boxes']
+        if pred_logits.ndim == 4:
+            final_logits = pred_logits[:, -1]
+            final_boxes = pred_boxes[:, -1]
+        else:
+            final_logits = pred_logits
+            final_boxes = pred_boxes
+
         return {
-            'pred_boxes': raw_out['pred_boxes'],
+            'pred_boxes': final_boxes,
             'pred_masks': None,
-            'pred_logits': raw_out['pred_logits'],
+            'pred_logits': final_logits,
             'recon_img': None,
             'input_img': x,
+            # Pass full layer-stacked output to compute_loss for aux losses
+            'pred_logits_all': pred_logits,
+            'pred_boxes_all': pred_boxes,
         }
 
     def compute_loss(self, out, batch):
-        """Compute DETR loss using the pre-built criterion."""
+        """Compute DETR loss using the pre-built criterion (with aux losses)."""
         from src.losses.model_losses import compute_detr_loss
         gt_masks = batch.get('gt_masks') if isinstance(batch, dict) else None
-        return compute_detr_loss(out, gt_masks, self._criterion, self._weight_dict)
+        # Use full layer-stacked outputs for aux losses, fall back to contract keys
+        loss_out = {
+            'pred_logits': out.get('pred_logits_all', out['pred_logits']),
+            'pred_boxes': out.get('pred_boxes_all', out['pred_boxes']),
+        }
+        return compute_detr_loss(loss_out, gt_masks, self._criterion, self._weight_dict)
 
 
 class StandardizedSAViWrapper(nn.Module):
@@ -151,7 +167,10 @@ def build_model(cfg):
         )
         # Build criterion inside the wrapper so train.py doesn't need to reach in
         from src.models.detr import HungarianMatcher, SetCriterion
-        w_dict = model_cfg.get('weight_dict', {'class': 1.0, 'bbox': 5.0, 'giou': 2.0})
+        w_dict = dict(model_cfg.get('weight_dict', {'class': 1.0, 'bbox': 5.0, 'giou': 2.0}))
+        # Ensure aux weight entries exist (use same weights as main by default)
+        for prefix in ('class', 'bbox', 'giou'):
+            w_dict.setdefault(f'{prefix}_aux', w_dict.get(prefix, 1.0))
         matcher = HungarianMatcher(
             cost_class=w_dict.get('class', 1.0),
             cost_bbox=w_dict.get('bbox', 5.0),

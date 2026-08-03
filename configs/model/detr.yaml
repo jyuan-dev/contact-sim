@@ -4,8 +4,8 @@ num_queries: 5
 num_classes: 3
 d_model: 128
 nhead: 4
-num_encoder_layers: 3
-num_decoder_layers: 3
+num_encoder_layers: 6
+num_decoder_layers: 6
 dim_feedforward: 512
 train_backbone: false
 
@@ -13,3 +13,6 @@ weight_dict:
   class: 1.0
   bbox: 5.0
   giou: 2.0
+  class_aux: 1.0
+  bbox_aux: 5.0
+  giou_aux: 2.0

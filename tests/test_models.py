@@ -168,18 +168,20 @@ class TestDETR(unittest.TestCase):
                     num_classes=num_classes, num_queries=num_queries)
 
     def test_forward_output_shapes(self):
-        """DETR forward pass should produce correctly shaped outputs."""
+        """DETR forward pass should produce correctly shaped outputs with layer dim."""
         model = self._build_detr(num_classes=3, num_queries=5)
         x = torch.randn(2, 3, 64, 64)
         out = model(x)
-        self.assertEqual(out['pred_logits'].shape, (2, 5, 4))  # 3 classes + 1
-        self.assertEqual(out['pred_boxes'].shape, (2, 5, 4))
+        # [B, L, Q, C] — L=2 decoder layers by default in _build_detr
+        self.assertEqual(out['pred_logits'].shape, (2, 2, 5, 4))  # 2 layers, 3 classes + 1
+        self.assertEqual(out['pred_boxes'].shape, (2, 2, 5, 4))
 
     def test_pred_boxes_sigmoid(self):
         """Predicted boxes should be in [0, 1] (sigmoid-normalised)."""
         model = self._build_detr()
         x = torch.randn(1, 3, 64, 64)
         out = model(x)
+        # pred_boxes is [B, L, Q, 4] — check all layers
         self.assertTrue((out['pred_boxes'] >= 0.0).all())
         self.assertTrue((out['pred_boxes'] <= 1.0).all())
 
@@ -200,8 +202,13 @@ class TestStandardizedDETRWrapper(unittest.TestCase):
         wrapper = self._make_wrapper()
         x = torch.randn(2, 3, 64, 64)
         out = wrapper(x)
-        for key in ('pred_boxes', 'pred_masks', 'pred_logits', 'recon_img'):
+        for key in ('pred_boxes', 'pred_masks', 'pred_logits', 'recon_img', 'input_img'):
             self.assertIn(key, out)
+        # Contract key pred_logits is last layer only [B, Q, C]
+        self.assertEqual(out['pred_logits'].ndim, 3)
+        # Full stacked output available for loss
+        self.assertIn('pred_logits_all', out)
+        self.assertEqual(out['pred_logits_all'].ndim, 4)
 
     def test_pred_masks_is_none(self):
         """DETR wrapper should always set pred_masks=None."""
