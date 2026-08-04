@@ -154,10 +154,14 @@ def compute_savi_loss(out, gt_masks, weight_dict=None):
 
             # 2. Compute BCE and Dice loss on matched slot-target pairs
             with torch.amp.autocast('cuda', enabled=False):
-                p_matched = pred_m.reshape(-1, H, W)[matched_src].clamp(eps, 1.0 - eps).float()
+                p_matched = pred_m.reshape(-1, H, W)[matched_src].float()
+                p_matched = torch.nan_to_num(p_matched, nan=eps, posinf=1.0 - eps, neginf=eps)
+                p_matched = p_matched.clamp(eps, 1.0 - eps)
+
                 g_matched = (gt_m.reshape(-1, H, W)[matched_tgt] > 0.5).float()
 
                 mask_bce = F.binary_cross_entropy(p_matched, g_matched)
+
                 
                 p_flat_m = p_matched.flatten(1)
                 g_flat_m = g_matched.flatten(1)
