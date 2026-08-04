@@ -138,8 +138,11 @@ def compute_savi_loss(out, gt_masks, weight_dict=None):
                 dice_cost = 1.0 - (2.0 * inter + eps) / (card + eps) # [N, S, C]
 
                 cost_matrix = (bce_cost + dice_cost).cpu().numpy()
+                import numpy as np
+                cost_matrix = np.nan_to_num(cost_matrix, nan=1e5, posinf=1e5, neginf=-1e5)
 
                 from scipy.optimize import linear_sum_assignment
+
                 matched_src, matched_tgt = [], []
                 for i in range(N_tot):
                     r_idx, c_idx = linear_sum_assignment(cost_matrix[i])
