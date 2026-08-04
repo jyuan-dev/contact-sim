@@ -140,7 +140,9 @@ class TestPushTMaskDatasetIntegration(unittest.TestCase):
         self.assertIn('img', sample)
         self.assertIn('gt_masks', sample)
         self.assertEqual(sample['img'].shape, (6, 3, 64, 64))
-        self.assertEqual(sample['gt_masks'].shape, (6, 3, 64, 64))
+        num_masks = len(PushTMaskHDF5Dataset.MASK_KEYS)
+        self.assertEqual(sample['gt_masks'].shape, (6, num_masks, 64, 64))
+
 
     def test_mask_value_range(self):
         ds = PushTMaskHDF5Dataset(

@@ -161,8 +161,15 @@ class SAVi(nn.Module):
             loss_dict=loss_dict,
         )
 
+    def load_state_dict(self, state_dict, strict=True):
+        """Handle state dict loading for both direct StoSAVi state dicts and wrapper state dicts."""
+        if any(k.startswith('model.') for k in state_dict.keys()):
+            return super().load_state_dict(state_dict, strict=strict)
+        return self.model.load_state_dict(state_dict, strict=strict)
+
     def forward(self, x, **kwargs):
         """Forward pass. Accepts tensor [B, T, C, H, W] or dict {'img': ...}."""
         if isinstance(x, torch.Tensor):
             x = {'img': x}
         return self.model(x)
+

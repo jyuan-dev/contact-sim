@@ -1,5 +1,5 @@
 defaults:
-  - model: detr
+  - model: savi
   - dataset: pusht
   - optional experiment: null
   - _self_
@@ -7,7 +7,7 @@ defaults:
 exp_name: ${model.name}_${dataset.name}
 seed: 42
 epochs: 8
-batch_size: 64
+batch_size: 128
 num_workers: 8
 lr: 2e-4
 weight_decay: 1e-4

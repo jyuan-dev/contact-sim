@@ -41,7 +41,8 @@ def augment_background(img_np, bg_threshold=240):
 
 # ── Mask-Supervised Dataset (for DETR box / mask tracking) ────────────────────
 class PushTMaskHDF5Dataset(Dataset):
-    MASK_KEYS = ['agent_masks', 'block_masks', 'goal_masks']
+    MASK_KEYS = ['agent_masks', 'block_masks']
+
 
     def __init__(
         self,
