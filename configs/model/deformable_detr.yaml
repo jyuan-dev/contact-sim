@@ -1,0 +1,18 @@
+name: "deformable_detr"
+type: "deformable_detr"
+
+num_classes: 3
+num_queries: 10
+d_model: 128
+nhead: 4
+num_encoder_layers: 3
+num_decoder_layers: 3
+dim_feedforward: 512
+dropout: 0.1
+backbone_name: "resnet18"
+train_backbone: true
+
+weight_dict:
+  class: 1.0
+  bbox: 5.0
+  giou: 2.0
