@@ -16,8 +16,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import cv2
-import imageio
 import matplotlib.pyplot as plt
+
 from scipy.optimize import linear_sum_assignment
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -227,8 +227,11 @@ def main(cfg: DictConfig):
         vis_frames.append(combined_large)
 
     gif_path = os.path.join(output_dir, "slot_swapping_demo.gif")
-    imageio.mimsave(gif_path, vis_frames, fps=10, loop=0)
+    from PIL import Image
+    pil_vis_frames = [Image.fromarray(f) for f in vis_frames]
+    pil_vis_frames[0].save(gif_path, save_all=True, append_images=pil_vis_frames[1:], duration=100, loop=0)
     print(f"Saved Slot Swapping GIF to: {gif_path}")
+
 
     # Copy to brain dir if available
     brain_dir = "/home/jyuan/.gemini/antigravity-ide/brain/0e62dc39-5378-4e8f-b19c-9d502981fb60"

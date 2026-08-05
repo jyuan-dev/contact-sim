@@ -160,6 +160,15 @@ class SAVi(nn.Module):
             pred_dict=pred_dict,
             loss_dict=loss_dict,
         )
+        # Bind dynamic dtype property to third-party StoSAVi instance
+        type(self.model).dtype = property(lambda self: next(self.parameters()).dtype)
+
+
+    @property
+    def dtype(self):
+        return next(self.parameters()).dtype
+
+
 
     def load_state_dict(self, state_dict, strict=True):
         """Handle state dict loading for both direct StoSAVi state dicts and wrapper state dicts."""

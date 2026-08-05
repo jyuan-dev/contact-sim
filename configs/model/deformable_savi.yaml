@@ -1,0 +1,12 @@
+model:
+  name: "deformable_savi"
+  type: "deformable_savi"
+  resolution: [64, 64]
+  n_sample_frames: 6
+  num_slots: 4
+  slot_dim: 64
+  num_iterations: 3
+  n_heads: 4
+  n_points: 4
+  loss_dict:
+    kld_method: "none"
