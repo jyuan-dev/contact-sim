@@ -27,7 +27,7 @@ from src.datasets.pusht import PushTMaskHDF5Dataset
 from src.metrics.evaluator import compute_binary_iou_dice, EvaluationSuite
 from src.utils.training_utils import get_device
 
-CLASS_NAMES = {0: "Block", 1: "Agent", 2: "Goal"}
+CLASS_NAMES = {0: "Block", 1: "Agent"}
 
 # Fixed Color Palette for Slot IDs (0..4)
 SLOT_COLORS_RGB = {
@@ -120,17 +120,18 @@ def main(cfg: DictConfig):
         pred_masks_np = np.zeros((T, 4, 64, 64), dtype=np.float32)
 
     T, K, H, W = pred_masks_np.shape
-    gt_masks_dict = {0: b_masks, 1: a_masks, 2: g_masks}
+    NUM_CLASSES = len(CLASS_NAMES)
+    gt_masks_dict = {0: b_masks, 1: a_masks}
 
     # 4. Perform Quantitative Slot Swapping Analysis
-    slot_assignments = {c: [] for c in range(3)}
-    slot_ious = {c: [] for c in range(3)}
+    slot_assignments = {c: [] for c in range(NUM_CLASSES)}
+    slot_ious = {c: [] for c in range(NUM_CLASSES)}
     swap_events = []
 
     for t in range(T):
-        cost_matrix = np.zeros((K, 3), dtype=np.float32)
+        cost_matrix = np.zeros((K, NUM_CLASSES), dtype=np.float32)
         for k in range(K):
-            for c in range(3):
+            for c in range(NUM_CLASSES):
                 iou, _ = compute_binary_iou_dice(pred_masks_np[t, k], gt_masks_dict[c][t])
                 cost_matrix[k, c] = -iou
 
@@ -156,8 +157,8 @@ def main(cfg: DictConfig):
         'total_frames': T,
         'total_swap_events': len(swap_events),
         'swap_rate_per_100_frames': float((len(swap_events) / T) * 100.0) if T > 0 else 0.0,
-        'class_mIoU': {CLASS_NAMES[c]: float(np.mean(slot_ious[c])) for c in range(3)},
-        'overall_mIoU': float(np.mean([np.mean(slot_ious[c]) for c in range(3)]))
+        'class_mIoU': {CLASS_NAMES[c]: float(np.mean(slot_ious[c])) for c in range(NUM_CLASSES)},
+        'overall_mIoU': float(np.mean([np.mean(slot_ious[c]) for c in range(NUM_CLASSES)]))
     }
 
     print("\n---------------- Slot Swapping Analysis Report ----------------")
@@ -188,8 +189,8 @@ def main(cfg: DictConfig):
 
         # Left Panel: GT Outlines
         p_gt = frame_rgb.copy()
-        gt_list = [b_masks[t], a_masks[t], g_masks[t]]
-        for m_idx in range(3):
+        gt_list = [b_masks[t], a_masks[t]]
+        for m_idx in range(len(gt_list)):
             m_bin = gt_list[m_idx]
             if m_bin.any():
                 contours, _ = cv2.findContours(m_bin.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -220,7 +221,7 @@ def main(cfg: DictConfig):
         combined = np.hstack([p_gt, p_slots_uint8])
         combined_large = cv2.resize(combined, (480, 240), interpolation=cv2.INTER_NEAREST)
 
-        banner_text = f"Frame {t:03d}/{T} | Swapping Rate: {metrics['swap_rate_per_100_frames']:.1f}/100f | Right: Fixed Slot Mask Color (S0=Red, S1=Green, S2=Blue)"
+        banner_text = f"Frame {t:03d}/{T} | Swapping Rate: {metrics['swap_rate_per_100_frames']:.1f}/100f | Right: Fixed Slot Masks (S0=Red, S1=Green)"
         cv2.rectangle(combined_large, (0, 0), (combined_large.shape[1], 18), (30, 140, 220), -1)
         cv2.putText(combined_large, banner_text, (8, 13), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (255, 255, 255), 1, cv2.LINE_AA)
 
@@ -234,7 +235,7 @@ def main(cfg: DictConfig):
 
 
     # Copy to brain dir if available
-    brain_dir = "/home/jyuan/.gemini/antigravity-ide/brain/0e62dc39-5378-4e8f-b19c-9d502981fb60"
+    brain_dir = "/home/jyuan/.gemini/antigravity-ide/brain/ce97180d-615b-4aa8-b285-0d5590b05f20"
     if os.path.exists(brain_dir):
         import shutil
         shutil.copy(gif_path, os.path.join(brain_dir, "slot_swapping_demo.gif"))
@@ -249,7 +250,6 @@ def main(cfg: DictConfig):
     ax1.set_title(f"1. Frame-by-Frame Slot Assignment per Object (Total Swaps: {metrics['total_swap_events']})", fontsize=11, fontweight='bold')
     ax1.plot(frames_axis, slot_assignments[0], label="T-Block Assigned Slot", color='darkorange', linewidth=2, marker='o', markersize=3)
     ax1.plot(frames_axis, slot_assignments[1], label="Agent Assigned Slot", color='green', linewidth=2, marker='s', markersize=3)
-    ax1.plot(frames_axis, slot_assignments[2], label="Goal Area Assigned Slot", color='dodgerblue', linewidth=1.5, linestyle='--')
     ax1.set_ylabel("Slot ID", fontsize=10)
     ax1.set_yticks(range(K))
     ax1.grid(True, linestyle=':', alpha=0.6)
@@ -260,7 +260,6 @@ def main(cfg: DictConfig):
     ax2.set_title("2. Object Segmentation IoU Scores Over Time", fontsize=11, fontweight='bold')
     ax2.plot(frames_axis, slot_ious[0], label="T-Block IoU", color='darkorange', linewidth=1.8)
     ax2.plot(frames_axis, slot_ious[1], label="Agent IoU", color='green', linewidth=1.8)
-    ax2.plot(frames_axis, slot_ious[2], label="Goal IoU", color='dodgerblue', linewidth=1.5, linestyle='--')
     ax2.set_ylabel("IoU Score", fontsize=10)
     ax2.set_ylim(-0.05, 1.05)
     ax2.grid(True, linestyle=':', alpha=0.6)
