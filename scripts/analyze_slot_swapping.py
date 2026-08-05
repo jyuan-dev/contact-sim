@@ -27,7 +27,7 @@ from src.datasets.pusht import PushTMaskHDF5Dataset
 from src.metrics.evaluator import compute_binary_iou_dice, EvaluationSuite
 from src.utils.training_utils import get_device
 
-CLASS_NAMES = {0: "Block", 1: "Agent"}
+CLASS_NAMES = {0: "Agent", 1: "Block"}
 
 # Fixed Color Palette for Slot IDs (0..4)
 SLOT_COLORS_RGB = {
@@ -121,7 +121,16 @@ def main(cfg: DictConfig):
 
     T, K, H, W = pred_masks_np.shape
     NUM_CLASSES = len(CLASS_NAMES)
-    gt_masks_dict = {0: b_masks, 1: a_masks}
+    gt_masks_dict = {0: a_masks, 1: b_masks}
+
+    # Determine match_mode from config or model checkpoint metadata
+    match_mode = 'hungarian'
+    if hasattr(cfg, 'weight_dict') and cfg.weight_dict and 'match_mode' in cfg.weight_dict:
+        match_mode = cfg.weight_dict.match_mode
+    elif 'weight_dict' in ckpt_data and isinstance(ckpt_data['weight_dict'], dict):
+        match_mode = ckpt_data['weight_dict'].get('match_mode', 'hungarian')
+
+    print(f"Slot Matching Evaluation Mode: '{match_mode.upper()}'")
 
     # 4. Perform Quantitative Slot Swapping Analysis
     slot_assignments = {c: [] for c in range(NUM_CLASSES)}
@@ -129,18 +138,23 @@ def main(cfg: DictConfig):
     swap_events = []
 
     for t in range(T):
-        cost_matrix = np.zeros((K, NUM_CLASSES), dtype=np.float32)
-        for k in range(K):
-            for c in range(NUM_CLASSES):
-                iou, _ = compute_binary_iou_dice(pred_masks_np[t, k], gt_masks_dict[c][t])
-                cost_matrix[k, c] = -iou
-
-        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        if match_mode == 'fixed':
+            # Option B: Fixed 1-to-1 Slot Index Mapping (Channel 0=Block -> Slot 0, Channel 1=Agent -> Slot 1)
+            row_ind = np.arange(min(K, NUM_CLASSES))
+            col_ind = np.arange(min(K, NUM_CLASSES))
+        else:
+            # Dynamic Hungarian Bipartite Assignment
+            cost_matrix = np.zeros((K, NUM_CLASSES), dtype=np.float32)
+            for k in range(K):
+                for c in range(NUM_CLASSES):
+                    iou, _ = compute_binary_iou_dice(pred_masks_np[t, k], gt_masks_dict[c][t])
+                    cost_matrix[k, c] = -iou
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
 
         for slot_idx, class_idx in zip(row_ind, col_ind):
-            best_iou = -cost_matrix[slot_idx, class_idx]
+            iou, _ = compute_binary_iou_dice(pred_masks_np[t, slot_idx], gt_masks_dict[class_idx][t])
             slot_assignments[class_idx].append(int(slot_idx))
-            slot_ious[class_idx].append(best_iou)
+            slot_ious[class_idx].append(iou)
 
             if t > 0 and (gt_masks_dict[class_idx][t].sum() > 0):
                 prev_slot = slot_assignments[class_idx][t - 1]
@@ -155,6 +169,7 @@ def main(cfg: DictConfig):
 
     metrics = {
         'total_frames': T,
+        'match_mode': match_mode,
         'total_swap_events': len(swap_events),
         'swap_rate_per_100_frames': float((len(swap_events) / T) * 100.0) if T > 0 else 0.0,
         'class_mIoU': {CLASS_NAMES[c]: float(np.mean(slot_ious[c])) for c in range(NUM_CLASSES)},
@@ -189,7 +204,7 @@ def main(cfg: DictConfig):
 
         # Left Panel: GT Outlines
         p_gt = frame_rgb.copy()
-        gt_list = [b_masks[t], a_masks[t]]
+        gt_list = [a_masks[t], b_masks[t]]
         for m_idx in range(len(gt_list)):
             m_bin = gt_list[m_idx]
             if m_bin.any():
@@ -248,8 +263,8 @@ def main(cfg: DictConfig):
     # Panel 1: Slot Assignment Timeline
     ax1 = axes[0]
     ax1.set_title(f"1. Frame-by-Frame Slot Assignment per Object (Total Swaps: {metrics['total_swap_events']})", fontsize=11, fontweight='bold')
-    ax1.plot(frames_axis, slot_assignments[0], label="T-Block Assigned Slot", color='darkorange', linewidth=2, marker='o', markersize=3)
-    ax1.plot(frames_axis, slot_assignments[1], label="Agent Assigned Slot", color='green', linewidth=2, marker='s', markersize=3)
+    ax1.plot(frames_axis, slot_assignments[0], label="Agent Assigned Slot", color='green', linewidth=2, marker='s', markersize=3)
+    ax1.plot(frames_axis, slot_assignments[1], label="T-Block Assigned Slot", color='darkorange', linewidth=2, marker='o', markersize=3)
     ax1.set_ylabel("Slot ID", fontsize=10)
     ax1.set_yticks(range(K))
     ax1.grid(True, linestyle=':', alpha=0.6)
@@ -258,8 +273,8 @@ def main(cfg: DictConfig):
     # Panel 2: Max Slot IoU Curves Over Time
     ax2 = axes[1]
     ax2.set_title("2. Object Segmentation IoU Scores Over Time", fontsize=11, fontweight='bold')
-    ax2.plot(frames_axis, slot_ious[0], label="T-Block IoU", color='darkorange', linewidth=1.8)
-    ax2.plot(frames_axis, slot_ious[1], label="Agent IoU", color='green', linewidth=1.8)
+    ax2.plot(frames_axis, slot_ious[0], label="Agent IoU", color='green', linewidth=1.8)
+    ax2.plot(frames_axis, slot_ious[1], label="T-Block IoU", color='darkorange', linewidth=1.8)
     ax2.set_ylabel("IoU Score", fontsize=10)
     ax2.set_ylim(-0.05, 1.05)
     ax2.grid(True, linestyle=':', alpha=0.6)
