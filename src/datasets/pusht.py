@@ -115,8 +115,16 @@ class PushTMaskHDF5Dataset(Dataset):
         video = (frames.astype(np.float32) / 127.5) - 1.0
         img = torch.from_numpy(video.transpose(0, 3, 1, 2))
 
-        gt_masks = np.stack([masks[k] for k in self.MASK_KEYS], axis=1)
-        gt_masks = torch.from_numpy(gt_masks).float() / 255.0
+        # Disentangle mask overlap: Subtract Block and Agent masks from Goal mask (Occlusion removal)
+        agent_m = (masks['agent_masks'] > 127).astype(np.float32)
+        block_m = (masks['block_masks'] > 127).astype(np.float32)
+        goal_m = (masks['goal_masks'] > 127).astype(np.float32)
+
+        # Visible Goal = Goal AND NOT (Block OR Agent)
+        goal_visible = np.clip(goal_m - np.maximum(block_m, agent_m), 0.0, 1.0)
+
+        gt_masks = np.stack([agent_m, block_m, goal_visible], axis=1)
+        gt_masks = torch.from_numpy(gt_masks).float()
 
         return {
             'data_idx': idx,
