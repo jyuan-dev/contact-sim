@@ -9,3 +9,7 @@ n_heads: 4
 n_points: 4
 loss_dict:
   kld_method: "none"
+
+weight_dict:
+  match_mode: "fixed"
+

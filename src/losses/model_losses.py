@@ -122,58 +122,79 @@ def compute_savi_loss(out, gt_masks, weight_dict=None):
             N_tot, S_slots = pred_m.shape[:2]
             eps = 1e-6
 
-            # 1. Hungarian Matching per batch-timestep
-            with torch.no_grad():
-                pred_flat = pred_m.flatten(2).float() # [N, S, HW]
-                gt_flat = (gt_m.flatten(2) > 0.5).float() # [N, C, HW]
-                
-                # BCE Cost
-                p_clamped = pred_flat.clamp(eps, 1.0 - eps)
-                bce_cost = - (gt_flat.unsqueeze(1) * torch.log(p_clamped.unsqueeze(2)) +
-                              (1.0 - gt_flat.unsqueeze(1)) * torch.log(1.0 - p_clamped.unsqueeze(2))).mean(dim=-1) # [N, S, C]
-                
-                # Dice Cost
-                inter = torch.einsum('nsh,nch->nsc', pred_flat, gt_flat)
-                card = pred_flat.sum(dim=-1, keepdim=True) + gt_flat.sum(dim=-1).unsqueeze(1)
-                dice_cost = 1.0 - (2.0 * inter + eps) / (card + eps) # [N, S, C]
+            # Check matching mode: 'fixed' (1-to-1 class index assignment) vs 'hungarian' (bipartite dynamic assignment)
+            match_mode = weight_dict.get('match_mode', 'hungarian') if weight_dict else 'hungarian'
 
-                cost_matrix = (bce_cost + dice_cost).cpu().numpy()
-                import numpy as np
-                cost_matrix = np.nan_to_num(cost_matrix, nan=1e5, posinf=1e5, neginf=-1e5)
+            if match_mode == 'fixed':
+                # Option B: Direct 1-to-1 correspondence (Slot k strictly matched to GT Channel k)
+                num_matched = min(S_slots, C)
+                with torch.amp.autocast('cuda', enabled=False):
+                    p_matched = pred_m[:, :num_matched].reshape(-1, H, W).float()
+                    p_matched = torch.nan_to_num(p_matched, nan=eps, posinf=1.0 - eps, neginf=eps)
+                    p_matched = p_matched.clamp(eps, 1.0 - eps)
 
-                from scipy.optimize import linear_sum_assignment
+                    g_matched = (gt_m[:, :num_matched].to(p_matched.device).reshape(-1, H, W) > 0.5).float()
 
-                matched_src, matched_tgt = [], []
-                for i in range(N_tot):
-                    r_idx, c_idx = linear_sum_assignment(cost_matrix[i])
-                    matched_src.append(torch.tensor(r_idx, device=pred_m.device) + i * S_slots)
-                    matched_tgt.append(torch.tensor(c_idx, device=pred_m.device) + i * C)
+                    mask_bce = F.binary_cross_entropy(p_matched, g_matched)
 
-                matched_src = torch.cat(matched_src)
-                matched_tgt = torch.cat(matched_tgt)
+                    p_flat_m = p_matched.flatten(1)
+                    g_flat_m = g_matched.flatten(1)
+                    num = 2.0 * (p_flat_m * g_flat_m).sum(dim=-1) + eps
+                    den = p_flat_m.sum(dim=-1) + g_flat_m.sum(dim=-1) + eps
+                    mask_dice = (1.0 - num / den).mean()
+            else:
+                # 1. Hungarian Matching per batch-timestep
+                with torch.no_grad():
+                    pred_flat = pred_m.flatten(2).float() # [N, S, HW]
+                    gt_flat = (gt_m.flatten(2) > 0.5).float() # [N, C, HW]
+                    
+                    # BCE Cost
+                    p_clamped = pred_flat.clamp(eps, 1.0 - eps)
+                    bce_cost = - (gt_flat.unsqueeze(1) * torch.log(p_clamped.unsqueeze(2)) +
+                                  (1.0 - gt_flat.unsqueeze(1)) * torch.log(1.0 - p_clamped.unsqueeze(2))).mean(dim=-1) # [N, S, C]
+                    
+                    # Dice Cost
+                    inter = torch.einsum('nsh,nch->nsc', pred_flat, gt_flat)
+                    card = pred_flat.sum(dim=-1, keepdim=True) + gt_flat.sum(dim=-1).unsqueeze(1)
+                    dice_cost = 1.0 - (2.0 * inter + eps) / (card + eps) # [N, S, C]
 
-            # 2. Compute BCE and Dice loss on matched slot-target pairs
-            with torch.amp.autocast('cuda', enabled=False):
-                p_matched = pred_m.reshape(-1, H, W)[matched_src].float()
-                p_matched = torch.nan_to_num(p_matched, nan=eps, posinf=1.0 - eps, neginf=eps)
-                p_matched = p_matched.clamp(eps, 1.0 - eps)
+                    cost_matrix = (bce_cost + dice_cost).cpu().numpy()
+                    import numpy as np
+                    cost_matrix = np.nan_to_num(cost_matrix, nan=1e5, posinf=1e5, neginf=-1e5)
 
-                g_matched = (gt_m.reshape(-1, H, W)[matched_tgt] > 0.5).float()
+                    from scipy.optimize import linear_sum_assignment
 
-                mask_bce = F.binary_cross_entropy(p_matched, g_matched)
+                    matched_src, matched_tgt = [], []
+                    for i in range(N_tot):
+                        r_idx, c_idx = linear_sum_assignment(cost_matrix[i])
+                        matched_src.append(torch.tensor(r_idx, device=pred_m.device) + i * S_slots)
+                        matched_tgt.append(torch.tensor(c_idx, device=pred_m.device) + i * C)
 
-                
-                p_flat_m = p_matched.flatten(1)
-                g_flat_m = g_matched.flatten(1)
-                num = 2.0 * (p_flat_m * g_flat_m).sum(dim=-1) + eps
-                den = p_flat_m.sum(dim=-1) + g_flat_m.sum(dim=-1) + eps
-                mask_dice = (1.0 - num / den).mean()
+                    matched_src = torch.cat(matched_src)
+                    matched_tgt = torch.cat(matched_tgt)
+
+                # 2. Compute BCE and Dice loss on matched slot-target pairs
+                with torch.amp.autocast('cuda', enabled=False):
+                    p_matched = pred_m.reshape(-1, H, W)[matched_src].float()
+                    p_matched = torch.nan_to_num(p_matched, nan=eps, posinf=1.0 - eps, neginf=eps)
+                    p_matched = p_matched.clamp(eps, 1.0 - eps)
+
+                    g_matched = (gt_m.reshape(-1, H, W)[matched_tgt] > 0.5).float()
+
+                    mask_bce = F.binary_cross_entropy(p_matched, g_matched)
+
+                    p_flat_m = p_matched.flatten(1)
+                    g_flat_m = g_matched.flatten(1)
+                    num = 2.0 * (p_flat_m * g_flat_m).sum(dim=-1) + eps
+                    den = p_flat_m.sum(dim=-1) + g_flat_m.sum(dim=-1) + eps
+                    mask_dice = (1.0 - num / den).mean()
 
             mask_loss = mask_bce + mask_dice
             w = weight_dict.get('mask', 1.0)
             terms.append(w * mask_loss)
             loss_dict['mask_bce'] = mask_bce.item()
             loss_dict['mask_dice'] = mask_dice.item()
+
 
     total_loss = sum(terms) if terms else torch.tensor(0.0, device=post_masks.device if post_masks is not None else
                                                        recon_img.device if recon_img is not None else
