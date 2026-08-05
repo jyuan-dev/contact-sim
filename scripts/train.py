@@ -51,6 +51,8 @@ def main(cfg: DictConfig):
 
     # 1. Build Model via Factory (wraps criterion/loss internally)
     model = build_model(cfg_dict).to(device)
+    match_mode = getattr(model, '_weight_dict', {}).get('match_mode', 'hungarian') if hasattr(model, '_weight_dict') and model._weight_dict else 'hungarian'
+    print(f"Slot Matching Supervision Mode: '{match_mode.upper()}' (Option B fixed 1-to-1 matching: {match_mode == 'fixed'})")
     print(f"Model '{model_name}' instantiated successfully via factory!")
 
     # 2. Build Dataloaders via Factory

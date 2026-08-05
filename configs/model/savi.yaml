@@ -16,5 +16,6 @@ loss_dict:
   kld_method: "none"
 
 weight_dict:
+  match_mode: "fixed"
   recon: 1.0
   mask: 1.0

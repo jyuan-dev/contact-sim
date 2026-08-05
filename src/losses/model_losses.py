@@ -122,8 +122,8 @@ def compute_savi_loss(out, gt_masks, weight_dict=None):
             N_tot, S_slots = pred_m.shape[:2]
             eps = 1e-6
 
-            # Check matching mode: 'fixed' (1-to-1 class index assignment) vs 'hungarian' (bipartite dynamic assignment)
-            match_mode = weight_dict.get('match_mode', 'hungarian') if weight_dict else 'hungarian'
+            # Check matching mode: 'fixed' (1-to-1 class index assignment, DEFAULT) vs 'hungarian' (bipartite dynamic assignment)
+            match_mode = weight_dict.get('match_mode', 'fixed') if weight_dict else 'fixed'
 
             if match_mode == 'fixed':
                 # Option B: Direct 1-to-1 correspondence (Slot k strictly matched to GT Channel k)
