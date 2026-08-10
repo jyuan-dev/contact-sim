@@ -27,14 +27,14 @@ from src.datasets.pusht import PushTMaskHDF5Dataset
 from src.metrics.evaluator import compute_binary_iou_dice, EvaluationSuite
 from src.utils.training_utils import get_device
 
-CLASS_NAMES = {0: "Agent", 1: "Block"}
+CLASS_NAMES = {0: "Agent", 1: "Block", 2: "Goal"}
 
 # Fixed Color Palette for Slot IDs (0..4)
 SLOT_COLORS_RGB = {
-    0: (255, 40, 40),     # Slot 0: Bright Red
-    1: (40, 220, 40),     # Slot 1: Bright Green
-    2: (40, 120, 255),    # Slot 2: Bright Blue
-    3: (255, 210, 0),     # Slot 3: Yellow
+    0: (255, 40, 40),     # Slot 0: Bright Red (Agent)
+    1: (40, 220, 40),     # Slot 1: Bright Green (Block)
+    2: (40, 120, 255),    # Slot 2: Bright Blue (Goal)
+    3: (255, 210, 0),     # Slot 3: Yellow (Background)
     4: (230, 40, 230)     # Slot 4: Magenta
 }
 
@@ -47,9 +47,9 @@ SLOT_COLORS_PLT = {
 }
 
 GT_COLORS_RGB = {
-    0: (255, 140, 0),    # Orange (Block)
-    1: (0, 230, 115),    # Green (Agent)
-    2: (0, 128, 255)     # Blue (Goal)
+    0: (0, 230, 115),    # Green (Agent)
+    1: (255, 140, 0),    # Orange (Block)
+    2: (0, 120, 255)     # Blue (Goal)
 }
 
 
@@ -97,7 +97,9 @@ def main(cfg: DictConfig):
         pixels = np.array(f['pixels'][offset : offset + length])
         b_masks = np.array(f['block_masks'][offset : offset + length]) > 0
         a_masks = np.array(f['agent_masks'][offset : offset + length]) > 0
-        g_masks = np.array(f['goal_masks'][offset : offset + length]) > 0
+        g_masks_raw = np.array(f['goal_masks'][offset : offset + length]).astype(np.float32) / 255.0
+        # Visible goal = Goal AND NOT (Block OR Agent)
+        g_masks = np.clip(g_masks_raw - np.maximum(b_masks.astype(np.float32), a_masks.astype(np.float32)), 0.0, 1.0) > 0.5
 
     T = length
     print(f"Loaded validation episode index {ep_idx}: {T} frames.")
@@ -121,7 +123,7 @@ def main(cfg: DictConfig):
 
     T, K, H, W = pred_masks_np.shape
     NUM_CLASSES = len(CLASS_NAMES)
-    gt_masks_dict = {0: a_masks, 1: b_masks}
+    gt_masks_dict = {0: a_masks, 1: b_masks, 2: g_masks}
 
     # Determine match_mode from config or model checkpoint metadata
     match_mode = 'hungarian'
@@ -204,7 +206,7 @@ def main(cfg: DictConfig):
 
         # Left Panel: GT Outlines
         p_gt = frame_rgb.copy()
-        gt_list = [a_masks[t], b_masks[t]]
+        gt_list = [a_masks[t], b_masks[t], g_masks[t]]
         for m_idx in range(len(gt_list)):
             m_bin = gt_list[m_idx]
             if m_bin.any():
@@ -236,7 +238,7 @@ def main(cfg: DictConfig):
         combined = np.hstack([p_gt, p_slots_uint8])
         combined_large = cv2.resize(combined, (480, 240), interpolation=cv2.INTER_NEAREST)
 
-        banner_text = f"Frame {t:03d}/{T} | Swapping Rate: {metrics['swap_rate_per_100_frames']:.1f}/100f | Right: Fixed Slot Masks (S0=Red, S1=Green)"
+        banner_text = f"Frame {t:03d}/{T} | Swapping Rate: {metrics['swap_rate_per_100_frames']:.1f}/100f | Right: Fixed Slot Masks (S0=Red, S1=Green, S2=Blue)"
         cv2.rectangle(combined_large, (0, 0), (combined_large.shape[1], 18), (30, 140, 220), -1)
         cv2.putText(combined_large, banner_text, (8, 13), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (255, 255, 255), 1, cv2.LINE_AA)
 
@@ -265,6 +267,7 @@ def main(cfg: DictConfig):
     ax1.set_title(f"1. Frame-by-Frame Slot Assignment per Object (Total Swaps: {metrics['total_swap_events']})", fontsize=11, fontweight='bold')
     ax1.plot(frames_axis, slot_assignments[0], label="Agent Assigned Slot", color='green', linewidth=2, marker='s', markersize=3)
     ax1.plot(frames_axis, slot_assignments[1], label="T-Block Assigned Slot", color='darkorange', linewidth=2, marker='o', markersize=3)
+    ax1.plot(frames_axis, slot_assignments[2], label="Goal Assigned Slot", color='royalblue', linewidth=2, marker='^', markersize=3)
     ax1.set_ylabel("Slot ID", fontsize=10)
     ax1.set_yticks(range(K))
     ax1.grid(True, linestyle=':', alpha=0.6)
@@ -275,6 +278,7 @@ def main(cfg: DictConfig):
     ax2.set_title("2. Object Segmentation IoU Scores Over Time", fontsize=11, fontweight='bold')
     ax2.plot(frames_axis, slot_ious[0], label="Agent IoU", color='green', linewidth=1.8)
     ax2.plot(frames_axis, slot_ious[1], label="T-Block IoU", color='darkorange', linewidth=1.8)
+    ax2.plot(frames_axis, slot_ious[2], label="Goal IoU", color='royalblue', linewidth=1.8)
     ax2.set_ylabel("IoU Score", fontsize=10)
     ax2.set_ylim(-0.05, 1.05)
     ax2.grid(True, linestyle=':', alpha=0.6)

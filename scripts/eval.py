@@ -12,7 +12,7 @@ import json
 import numpy as np
 import torch
 import cv2
-import imageio
+from PIL import Image
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
@@ -71,56 +71,83 @@ def main(cfg: DictConfig):
     val_loader = build_dataloader(cfg_dict, split='val', batch_size=1, num_workers=2, shuffle=False)
 
     evaluator = EvaluationSuite(num_classes=3)
-    batch = next(iter(val_loader))
+    num_eval_batches = cfg.get('eval_batches', 20)
+    all_metrics = []
 
-    imgs_torch = batch['img']
-    imgs_torch = imgs_torch.to(device)
-    gt_masks = batch.get('gt_masks', None)
-    if gt_masks is not None:
-        gt_masks = gt_masks.to(device)
+    print(f"Running Evaluation on {num_eval_batches} validation sequences...")
+    for step_idx, batch in enumerate(val_loader):
+        if step_idx >= num_eval_batches:
+            break
+        imgs_torch = batch['img'].to(device)
+        gt_masks = batch.get('gt_masks', None)
+        if gt_masks is not None:
+            gt_masks = gt_masks.to(device)
 
-    # 3. Forward Pass
-    with torch.no_grad():
-        out = model(imgs_torch)
+        with torch.no_grad():
+            out = model(imgs_torch)
 
-    pred_masks = out.get('pred_masks', None)
-    pred_boxes = out.get('pred_boxes', None)
-    pred_logits = out.get('pred_logits', None)
-    T = imgs_torch.shape[1] if imgs_torch.ndim == 5 else 1
+        pred_masks = out.get('pred_masks', None)
+        pred_boxes = out.get('pred_boxes', None)
+        pred_logits = out.get('pred_logits', None)
+        T = imgs_torch.shape[1] if imgs_torch.ndim == 5 else 1
 
-    if pred_masks is not None:
-        pred_masks_np = pred_masks[0].cpu().numpy()
-    elif pred_boxes is not None and pred_logits is not None:
-        # Convert DETR box predictions to slot-like binary masks for standard evaluation path
-        Q = pred_boxes.shape[1]
-        pred_masks_np = np.zeros((T, Q, 64, 64), dtype=np.float32)
-        
-        pred_classes = pred_logits.argmax(dim=-1).cpu().numpy()
-        pred_boxes_np = pred_boxes.cpu().numpy()
-        num_classes_detr = pred_logits.shape[-1] - 1
-        
-        for t_idx in range(min(T, pred_boxes_np.shape[0])):
-            for q in range(Q):
-                cls_id = pred_classes[t_idx, q]
-                if cls_id < num_classes_detr:
-                    cx, cy, w, h = pred_boxes_np[t_idx, q]
-                    x0 = int(np.clip((cx - 0.5 * w) * 64, 0, 64))
-                    y0 = int(np.clip((cy - 0.5 * h) * 64, 0, 64))
-                    x1 = int(np.clip((cx + 0.5 * w) * 64, 0, 64))
-                    y1 = int(np.clip((cy + 0.5 * h) * 64, 0, 64))
-                    if x1 > x0 and y1 > y0:
-                        pred_masks_np[t_idx, q, y0:y1, x0:x1] = 1.0
-    else:
-        pred_masks_np = np.zeros((T, 4, 64, 64), dtype=np.float32)
+        if pred_masks is not None:
+            pred_masks_np = pred_masks[0].cpu().numpy()
+        elif pred_boxes is not None and pred_logits is not None:
+            Q = pred_boxes.shape[1]
+            pred_masks_np = np.zeros((T, Q, 64, 64), dtype=np.float32)
+            pred_classes = pred_logits.argmax(dim=-1).cpu().numpy()
+            pred_boxes_np = pred_boxes.cpu().numpy()
+            num_classes_detr = pred_logits.shape[-1] - 1
+            
+            for t_idx in range(min(T, pred_boxes_np.shape[0])):
+                for q in range(Q):
+                    cls_id = pred_classes[t_idx, q]
+                    if cls_id < num_classes_detr:
+                        cx, cy, w, h = pred_boxes_np[t_idx, q]
+                        x0 = int(np.clip((cx - 0.5 * w) * 64, 0, 64))
+                        y0 = int(np.clip((cy - 0.5 * h) * 64, 0, 64))
+                        x1 = int(np.clip((cx + 0.5 * w) * 64, 0, 64))
+                        y1 = int(np.clip((cy + 0.5 * h) * 64, 0, 64))
+                        if x1 > x0 and y1 > y0:
+                            pred_masks_np[t_idx, q, y0:y1, x0:x1] = 1.0
+        else:
+            pred_masks_np = np.zeros((T, 4, 64, 64), dtype=np.float32)
 
-    # 4. Evaluate Metrics
-    if gt_masks is not None:
-        gt_masks_np = gt_masks[0].cpu().numpy() # [T, M, H, W]
-        gt_masks_dict = {m_idx: (gt_masks_np[:, m_idx] > 0.5) for m_idx in range(gt_masks_np.shape[1])}
-    else:
-        gt_masks_dict = {}
+        if gt_masks is not None:
+            gt_masks_np = gt_masks[0].cpu().numpy() # [T, M, H, W]
+            gt_masks_dict = {m_idx: (gt_masks_np[:, m_idx] > 0.5) for m_idx in range(gt_masks_np.shape[1])}
+        else:
+            gt_masks_dict = {}
 
-    metrics = evaluator.evaluate_sequence_masks(pred_masks_np, gt_masks_dict)
+        seq_metrics = evaluator.evaluate_sequence_masks(pred_masks_np, gt_masks_dict)
+        all_metrics.append(seq_metrics)
+
+    # Aggregate metrics across evaluated validation sequences
+    total_frames = sum(m['total_frames'] for m in all_metrics)
+    total_swaps = sum(m['total_swap_events'] for m in all_metrics)
+    overall_mIoU = float(np.mean([m['overall_mIoU'] for m in all_metrics]))
+    overall_mDice = float(np.mean([m['overall_mDice'] for m in all_metrics]))
+    swap_rate = (total_swaps / max(total_frames, 1)) * 100.0
+
+    class_names_map = {0: "Agent", 1: "Block", 2: "Goal"}
+    class_metrics = {}
+    for cls_idx, cls_name in class_names_map.items():
+        cls_ious = [m['class_metrics'].get(cls_name, {}).get('mean_iou', 0.0) for m in all_metrics if cls_name in m['class_metrics']]
+        cls_dices = [m['class_metrics'].get(cls_name, {}).get('mean_dice', 0.0) for m in all_metrics if cls_name in m['class_metrics']]
+        class_metrics[cls_name] = {
+            'mean_iou': float(np.mean(cls_ious)) if cls_ious else 0.0,
+            'mean_dice': float(np.mean(cls_dices)) if cls_dices else 0.0,
+        }
+
+    metrics = {
+        'total_frames': total_frames,
+        'total_swap_events': total_swaps,
+        'swap_rate_per_100_frames': float(swap_rate),
+        'class_metrics': class_metrics,
+        'overall_mIoU': overall_mIoU,
+        'overall_mDice': overall_mDice,
+    }
 
     print("\n---------------- Quantitative Evaluation Report ----------------")
     print(f"Total Frames Analyzed: {metrics['total_frames']}")
@@ -207,7 +234,9 @@ def main(cfg: DictConfig):
 
     os.makedirs("scratch", exist_ok=True)
     out_gif = "scratch/baseline_eval_demo.gif"
-    imageio.mimsave(out_gif, vis_frames, fps=10, loop=0)
+    pil_frames = [Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f in vis_frames]
+    if pil_frames:
+        pil_frames[0].save(out_gif, save_all=True, append_images=pil_frames[1:], duration=100, loop=0)
     print(f"Saved evaluation video to: {out_gif}")
 
     # Save JSON report
