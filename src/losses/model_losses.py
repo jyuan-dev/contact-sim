@@ -195,6 +195,18 @@ def compute_savi_loss(out, gt_masks, weight_dict=None):
             loss_dict['mask_bce'] = mask_bce.item()
             loss_dict['mask_dice'] = mask_dice.item()
 
+    # Optional SIGReg (Sketched Isotropic Gaussian Regularization) Loss for latent slots
+    w_sigreg = weight_dict.get('sigreg', 0.0) if weight_dict else 0.0
+    post_slots = out.get('post_slots', out.get('slots', None))
+    if w_sigreg > 0.0 and post_slots is not None:
+        from src.losses.sigreg import SIGRegLoss
+        if not hasattr(compute_savi_loss, '_sigreg_fn'):
+            compute_savi_loss._sigreg_fn = SIGRegLoss()
+        
+        # Flatten slots to [N, D] for isotropic Gaussian feature distribution regularization
+        sigreg_loss = compute_savi_loss._sigreg_fn(post_slots)
+        terms.append(w_sigreg * sigreg_loss)
+        loss_dict['sigreg_loss'] = sigreg_loss.item()
 
     total_loss = sum(terms) if terms else torch.tensor(0.0, device=post_masks.device if post_masks is not None else
                                                        recon_img.device if recon_img is not None else

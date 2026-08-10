@@ -50,6 +50,23 @@ class TestLosses(unittest.TestCase):
         loss = loss_fn(single_latent)
         self.assertEqual(loss.item(), 0.0)
 
+    def test_savi_sigreg_loss_integration(self):
+        """Test compute_savi_loss properly computes and logs sigreg_loss term."""
+        from src.losses.model_losses import compute_savi_loss
+        
+        out = {
+            'recon_img': torch.randn(2, 3, 3, 64, 64),
+            'input_img': torch.randn(2, 3, 3, 64, 64),
+            'pred_masks': torch.sigmoid(torch.randn(2, 3, 4, 64, 64)),
+            'post_slots': torch.randn(2, 3, 4, 64),
+        }
+        gt_masks = (torch.randn(2, 3, 3, 64, 64) > 0).float()
+        weight_dict = {'recon': 1.0, 'mask': 1.0, 'sigreg': 0.1, 'match_mode': 'fixed'}
+        
+        total_loss, loss_dict = compute_savi_loss(out, gt_masks, weight_dict=weight_dict)
+        self.assertTrue('sigreg_loss' in loss_dict)
+        self.assertTrue(loss_dict['sigreg_loss'] > 0.0)
+
 
 if __name__ == '__main__':
     unittest.main()
