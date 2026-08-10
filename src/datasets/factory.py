@@ -75,7 +75,7 @@ def build_dataset(cfg, split: str = 'train'):
         img_size = merged_cfg.get('img_size', merged_cfg.get('resolution', [64, 64]))
         if isinstance(img_size, (list, tuple)):
             img_size = img_size[0]
-        seed = merged_cfg.get('seed', 42) if split == 'train' else merged_cfg.get('seed', 42) + 9999
+        seed = merged_cfg.get('seed', 42) + (0 if split == 'train' else 9999)
 
         return GridShapesDataset(
             num_samples=num_samples,

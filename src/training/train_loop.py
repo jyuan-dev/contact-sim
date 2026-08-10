@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Optional
@@ -33,6 +34,7 @@ from torch.utils.data import DataLoader
 
 from src.models.base import BaseModelWrapper
 from src.training.trainer import BaseTrainer
+from src.utils.training_utils import cosine_anneal_with_warmup
 
 
 # ── Training Configuration ────────────────────────────────────────────────────
@@ -69,7 +71,7 @@ class TrainConfig:
     ckpt_dir: str = "scratch/checkpoints/default"
     model_name: str = "model"
 
-    # LR scheduler (reserved for future use; currently unused)
+    # LR scheduler name (e.g. 'cosine'; null = constant LR)
     scheduler: Optional[str] = None
 
     # Scheduler hyperparameters
@@ -174,7 +176,6 @@ def run_epoch(
                     out = model(video)
                     loss, loss_dict = model.compute_loss(out, batch)
             except ValueError as err:
-                import traceback
                 if is_train:
                     print("\n" + "!" * 80)
                     print(f"⚠️  [CRITICAL WARNING / NAN AT SOURCE] Step [{global_step + 1}]: {err}")
@@ -210,7 +211,6 @@ def run_epoch(
 
                 # ── Per-step LR scheduling ────────────────────────────────
                 if cfg.scheduler == 'cosine':
-                    from src.utils.training_utils import cosine_anneal_with_warmup
                     new_lr = cosine_anneal_with_warmup(
                         global_step, total_target_steps, cfg.warmup_steps,
                         cfg.lr, cfg.min_lr,

@@ -26,7 +26,7 @@ class StandardizedSAViWrapper(BaseModelWrapper):
 
     Handles:
       - Tensor / dict input normalization
-      - Resolution up/down-sampling to the model's native 64×64
+      - Resolution up/down-sampling to the model's configured resolution
       - Output key normalization (post_masks / prior_masks / masks variants)
       - Delegate loss to ``src.losses.savi_loss.compute_savi_loss``
     """
@@ -93,7 +93,7 @@ class StandardizedSAViWrapper(BaseModelWrapper):
             x = {"img": x}
 
         img_tensor: Tensor = x["img"]
-        target_size = getattr(self, 'resolution', (64, 64))
+        target_size = self.resolution
         if img_tensor.shape[-2:] != target_size:
             B, T, C, H, W = img_tensor.shape
             img_tensor = F.interpolate(

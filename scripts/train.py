@@ -19,6 +19,7 @@ import os
 
 import hydra
 import torch
+from functools import partial
 from omegaconf import DictConfig, OmegaConf
 
 from src.models.factory import build_model
@@ -43,7 +44,7 @@ def _save_checkpoint(model, path: str, epoch: int, config: dict = None) -> None:
 def main(cfg: DictConfig) -> None:
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
-    device = get_device(cfg.get("device", None))
+    device = get_device(cfg.get("device"))
     set_seed(int(cfg.get("seed", 42)))
 
     model_name = cfg.model.name
@@ -107,8 +108,6 @@ def main(cfg: DictConfig) -> None:
     print(f"AMP: {'enabled (FP16)' if train_cfg.use_amp else 'disabled (FP32)'}")
 
     # ── Delegate to run_training ──────────────────────────────────────────
-    # Wrap save function to capture the resolved config dict for checkpoint metadata
-    _save_fn = lambda model, path, epoch: _save_checkpoint(model, path, epoch, config=cfg_dict)  # noqa: E731
     run_training(
         model=model,
         train_loader=train_loader,
@@ -118,7 +117,7 @@ def main(cfg: DictConfig) -> None:
         device=device,
         cfg=train_cfg,
         trainer=trainer,
-        save_checkpoint_fn=_save_fn,
+        save_checkpoint_fn=partial(_save_checkpoint, config=cfg_dict),
     )
 
     trainer.close()

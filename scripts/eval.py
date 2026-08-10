@@ -139,14 +139,14 @@ def main(cfg: DictConfig):
     state = ckpt_data.get('model', ckpt_data.get('model_state', ckpt_data))
     # Normalize checkpoint keys: strip 'module.' prefix (from DDP/DataParallel)
     # and collapse double 'model.model.' wrapping into single 'model.' prefix.
-    _norm_state = {}
-    for _k, _v in state.items():
-        while _k.startswith('module.'):
-            _k = _k[len('module.'):]
-        while _k.startswith('model.model.'):
-            _k = _k[len('model.'):]
-        _norm_state[_k] = _v
-    missing, unexpected = model.load_state_dict(_norm_state, strict=False)
+    norm_state = {}
+    for k, v in state.items():
+        while k.startswith('module.'):
+            k = k[len('module.'):]
+        while k.startswith('model.model.'):
+            k = k[len('model.'):]
+        norm_state[k] = v
+    missing, unexpected = model.load_state_dict(norm_state, strict=False)
     if missing:
         print(f"Warning: {len(missing)} missing keys when loading checkpoint "
               f"(first 5: {missing[:5]})")
