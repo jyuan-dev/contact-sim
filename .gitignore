@@ -152,4 +152,7 @@ scratch/
 outputs/
 .hydra/
 
+# Third-party dependencies
+third_party/
+
 
