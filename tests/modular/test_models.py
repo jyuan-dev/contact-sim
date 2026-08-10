@@ -21,7 +21,7 @@ from src.models.savi import SAVi
 from src.models.deformable_savi import DeformableSAVi
 from src.models.factory import build_model, register_model, list_models
 from src.models.base import BaseModelWrapper
-from src.models.model_output import ModelOutput
+from src.models.base import ModelOutput
 from src.models.wrappers import (
     StandardizedSAViWrapper,
     StandardizedDeformableSAViWrapper,

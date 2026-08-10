@@ -17,8 +17,7 @@ Base model classes:
   SAVi
 """
 
-from src.models.model_output import ModelOutput
-from src.models.base import BaseModelWrapper
+from src.models.base import BaseModelWrapper, ModelOutput
 from src.models.factory import build_model, register_model, list_models
 from src.models.savi import SAVi
 

@@ -9,8 +9,10 @@ Available wrappers (registered names):
   - "deformable_savi"  → StandardizedDeformableSAViWrapper
 """
 
-from src.models.wrappers.savi_wrapper import StandardizedSAViWrapper
-from src.models.wrappers.deformable_savi_wrapper import StandardizedDeformableSAViWrapper
+from src.models.wrappers.savi_wrapper import (
+    StandardizedSAViWrapper,
+    StandardizedDeformableSAViWrapper,
+)
 
 __all__ = [
     "StandardizedSAViWrapper",

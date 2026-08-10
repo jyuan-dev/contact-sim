@@ -1,44 +1,71 @@
 """
-BaseModelWrapper — Abstract Base Class for all Contact-Sim model wrappers.
+BaseModelWrapper + ModelOutput contract — foundation for all Contact-Sim wrappers.
 
-Every model family (DETR, SAVi, DeformableSAVi, …) must:
-
+Every model family must:
 1. Subclass ``BaseModelWrapper``.
 2. Implement ``forward(x) -> ModelOutput``.
 3. Implement ``compute_loss(out, batch) -> tuple[Tensor, dict]``.
-4. Implement the ``build(model_cfg)`` classmethod that self-constructs from a
-   plain-dict model config section (already resolved from Hydra / OmegaConf).
+4. Implement the ``build(model_cfg)`` classmethod.
 
-This makes adding new model families trivial:
+Usage::
 
     @register_model("my_new_model")
     class MyNewModelWrapper(BaseModelWrapper):
-
         @classmethod
         def build(cls, model_cfg: dict) -> "MyNewModelWrapper":
             base = MyNewModel(...)
             return cls(base)
 
-        def forward(self, x) -> ModelOutput:
-            ...
-
-        def compute_loss(self, out: ModelOutput, batch: dict):
-            ...
-
-The ``@register_model`` decorator (from ``src.models.factory``) wires the
-class into the global registry so that ``build_model(cfg)`` can find it.
+        def forward(self, x) -> ModelOutput: ...
+        def compute_loss(self, out: ModelOutput, batch: dict): ...
 """
 
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, Optional
+
+try:
+    from typing import Required, NotRequired
+except ImportError:          # Python < 3.11
+    from typing_extensions import Required, NotRequired
+
+try:
+    from typing import TypedDict
+except ImportError:
+    from typing_extensions import TypedDict
 
 import torch.nn as nn
 from torch import Tensor
 
-from src.models.model_output import ModelOutput
 
+# ── Output contract ────────────────────────────────────────────────────────────
+
+class ModelOutput(TypedDict, total=False):
+    """Standardized forward-pass output dictionary.
+
+    Keys marked Required must always be present.  Other keys are model-family
+    specific and may be ``None``.
+    """
+
+    # Always present
+    input_img: Required[Tensor]         # [B, (T,) C, H, W]
+
+    # Detection outputs (DETR family)
+    pred_boxes: Optional[Tensor]        # [B, Q, 4]
+    pred_logits: Optional[Tensor]       # [B, Q, num_classes + 1]
+
+    # Segmentation / reconstruction outputs (SAVi family)
+    pred_masks: Optional[Tensor]        # [B, T, K, H, W]
+    recon_img: Optional[Tensor]         # [B, T, C, H, W]
+    post_slots: Optional[Tensor]        # [B, T, K, D]
+
+    # DETR-internal: full layer stack for auxiliary loss computation
+    pred_logits_all: NotRequired[Optional[Tensor]]
+    pred_boxes_all: NotRequired[Optional[Tensor]]
+
+
+# ── Abstract base class ────────────────────────────────────────────────────────
 
 class BaseModelWrapper(abc.ABC, nn.Module):
     """
