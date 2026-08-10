@@ -21,11 +21,26 @@ from src.models.savi import SAVi
 from src.models.deformable_savi import DeformableSAVi
 from src.models.factory import build_model, register_model, list_models
 from src.models.base import BaseModelWrapper
-from src.models.model_output import ModelOutput, validate_model_output, EVAL_OUTPUT_KEYS
+from src.models.model_output import ModelOutput
 from src.models.wrappers import (
     StandardizedSAViWrapper,
     StandardizedDeformableSAViWrapper,
 )
+
+# ── Moved from model_output.py (only tests used them) ─────────────────────────
+
+_EVAL_OUTPUT_KEYS: frozenset = frozenset({
+    "input_img", "pred_boxes", "pred_logits", "pred_masks", "recon_img", "post_slots",
+})
+
+
+def _validate_model_output(out: dict, model_name: str = "unknown") -> None:
+    """Runtime check that a forward-pass output contains the required 'input_img' key."""
+    if "input_img" not in out:
+        raise ValueError(
+            f"Model '{model_name}' forward() output is missing the required "
+            f"'input_img' key.  All wrappers must include it."
+        )
 
 
 # ── Model Registry Tests ──────────────────────────────────────────────────────
@@ -132,17 +147,17 @@ class TestModelOutputContract(unittest.TestCase):
         """validate_model_output should raise if 'input_img' is missing."""
         bad_out = {"pred_boxes": None}
         with self.assertRaises(ValueError):
-            validate_model_output(bad_out, "test_model")
+            _validate_model_output(bad_out, "test_model")
 
     def test_validate_passes_with_input_img(self):
         """validate_model_output should not raise when 'input_img' is present."""
         good_out = {"input_img": torch.zeros(1, 3, 64, 64)}
-        validate_model_output(good_out, "test_model")
+        _validate_model_output(good_out, "test_model")
 
     def test_eval_output_keys_set(self):
         """EVAL_OUTPUT_KEYS should contain the core contract keys."""
         for key in ("input_img", "pred_boxes", "pred_masks", "recon_img"):
-            self.assertIn(key, EVAL_OUTPUT_KEYS)
+            self.assertIn(key, _EVAL_OUTPUT_KEYS)
 
 
 # ── Wrapper Forward Shape Tests ───────────────────────────────────────────────
@@ -170,7 +185,7 @@ class TestStandardizedSAViWrapper(unittest.TestCase):
         """All EVAL_OUTPUT_KEYS must be present in SAVi wrapper output."""
         wrapper = self._make_savi_wrapper()
         out = wrapper(torch.randn(1, 3, 3, 64, 64))
-        for key in EVAL_OUTPUT_KEYS:
+        for key in _EVAL_OUTPUT_KEYS:
             self.assertIn(key, out, f"Missing EVAL_OUTPUT_KEY: '{key}'")
 
 

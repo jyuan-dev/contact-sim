@@ -15,28 +15,9 @@ if HDF5_PLUGIN_PATH and os.path.exists(HDF5_PLUGIN_PATH):
 import torch
 from torch.utils.data import Dataset
 
-# ── ImageNet Normalization utilities ──────────────────────────────────────────
+# ── ImageNet Normalization constants ─────────────────────────────────────────
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-
-
-def normalize_img(img_tensor):
-    """Normalize a [C,H,W] tensor from [0,1] range to ImageNet zero-mean/unit-std."""
-    return (img_tensor - IMAGENET_MEAN) / IMAGENET_STD
-
-
-def denormalize_img(img_tensor):
-    """Denormalize a [C,H,W] tensor from ImageNet stats back to [0,1] range."""
-    return img_tensor * IMAGENET_STD.to(img_tensor.device) + IMAGENET_MEAN.to(img_tensor.device)
-
-
-def augment_background(img_np, bg_threshold=240):
-    """Replace white background pixels with a random color in a uint8 HWC image."""
-    bg_mask = np.all(img_np > bg_threshold, axis=-1)
-    rand_color = np.random.randint(0, 256, size=(3,), dtype=np.uint8)
-    img_aug = img_np.copy()
-    img_aug[bg_mask] = rand_color
-    return img_aug
 
 
 # ── Mask-Supervised Dataset (for DETR box / mask tracking) ────────────────────

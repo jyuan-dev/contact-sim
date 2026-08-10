@@ -66,26 +66,3 @@ class ModelOutput(TypedDict, total=False):
     pred_boxes_all: NotRequired[Optional[Tensor]]    # [B, L, Q, 4]
 
 
-# Convenience set of keys that the evaluation / metrics code may access.
-EVAL_OUTPUT_KEYS: frozenset[str] = frozenset({
-    "input_img",
-    "pred_boxes",
-    "pred_logits",
-    "pred_masks",
-    "recon_img",
-    "post_slots",
-})
-
-
-def validate_model_output(out: dict, model_name: str = "unknown") -> None:
-    """
-    Runtime check that a forward-pass output dictionary contains the required
-    ``input_img`` key.  Raises ``ValueError`` on violation.
-
-    Call this from ``BaseModelWrapper.forward()`` during development / testing.
-    """
-    if "input_img" not in out:
-        raise ValueError(
-            f"Model '{model_name}' forward() output is missing the required "
-            f"'input_img' key.  All wrappers must include it."
-        )

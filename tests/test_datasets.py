@@ -3,32 +3,49 @@ import os
 import torch
 
 from src.datasets.factory import build_dataset, build_dataloader
-from src.datasets.pusht import PushTMaskHDF5Dataset, normalize_img, denormalize_img, augment_background
+from src.datasets.pusht import PushTMaskHDF5Dataset, IMAGENET_MEAN, IMAGENET_STD
 from src.datasets.gridshapes import GridShapesDataset
 import numpy as np
 
 
-# ── pusht.py utilities ────────────────────────────────────────────────────────
+# ── pusht.py utilities (moved here — only tests used them) ─────────────────────
+
+def _normalize_img(img_tensor):
+    """Normalize a [C,H,W] tensor from [0,1] range to ImageNet zero-mean/unit-std."""
+    return (img_tensor - IMAGENET_MEAN) / IMAGENET_STD
+
+
+def _denormalize_img(img_tensor):
+    """Denormalize a [C,H,W] tensor from ImageNet stats back to [0,1] range."""
+    return img_tensor * IMAGENET_STD.to(img_tensor.device) + IMAGENET_MEAN.to(img_tensor.device)
+
+
+def _augment_background(img_np, bg_threshold=240):
+    """Replace white background pixels with a random color in a uint8 HWC image."""
+    bg_mask = np.all(img_np > bg_threshold, axis=-1)
+    rand_color = np.random.randint(0, 256, size=(3,), dtype=np.uint8)
+    img_aug = img_np.copy()
+    img_aug[bg_mask] = rand_color
+    return img_aug
+
 
 class TestPushTUtilities(unittest.TestCase):
     def test_normalize_denormalize_roundtrip(self):
         """normalize followed by denormalize should approximately recover the original."""
         img = torch.rand(3, 64, 64)
-        recovered = denormalize_img(normalize_img(img))
+        recovered = _denormalize_img(_normalize_img(img))
         self.assertTrue(torch.allclose(img, recovered, atol=1e-5))
 
     def test_normalize_shifts_range(self):
         """After normalisation, mean should be close to 0 for ImageNet-like inputs."""
-        # An all-0.5 image normalises to approx 0 (mean subtracted)
         img = torch.ones(3, 64, 64) * 0.5
-        normalized = normalize_img(img)
+        normalized = _normalize_img(img)
         self.assertTrue(normalized.abs().max() < 2.0)
 
     def test_augment_background_replaces_white_pixels(self):
         """augment_background should change purely white pixel values."""
         img = np.ones((32, 32, 3), dtype=np.uint8) * 255  # all white
-        augmented = augment_background(img)
-        # Some pixels should have changed
+        augmented = _augment_background(img)
         self.assertFalse(np.all(augmented == 255))
 
 
