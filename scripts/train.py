@@ -25,7 +25,7 @@ from src.models.factory import build_model
 from src.datasets.factory import build_dataloader
 from src.training.trainer import BaseTrainer
 from src.training.train_loop import TrainConfig, run_training
-from src.utils.training_utils import get_device, set_seed
+from src.utils.training_utils import get_device, set_seed, load_checkpoint_state
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -69,11 +69,9 @@ def main(cfg: DictConfig) -> None:
         ckpt_path = cfg.ckpt_path
         if not os.path.isabs(ckpt_path):
             ckpt_path = os.path.join(REPO_ROOT, ckpt_path)
-        ckpt = torch.load(ckpt_path, map_location=device)
         model = build_model(cfg_dict).to(device)
-        state_dict = ckpt.get("model_state", ckpt)
-        model.load_state_dict(state_dict, strict=True)
-        print(f"Loaded weights from: {cfg.ckpt_path}")
+        load_checkpoint_state(model, ckpt_path, device=device)
+        print(f"Loaded weights from: {ckpt_path}")
     else:
         model = build_model(cfg_dict).to(device)
 

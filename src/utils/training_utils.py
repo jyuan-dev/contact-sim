@@ -30,3 +30,35 @@ def get_device(requested_device: str = None) -> torch.device:
     if requested_device:
         return torch.device(requested_device)
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+# ── Checkpoint loading ────────────────────────────────────────────────────────
+
+def load_checkpoint_state(model: torch.nn.Module, ckpt_path: str,
+                          device: torch.device = None) -> None:
+    """
+    Load a checkpoint into *model*, validating that keys match.
+
+    Uses ``strict=False`` to discover missing and unexpected keys, then
+    **raises** ``ValueError`` if either set is non-empty.  This catches
+    wrapper-level prefix mismatches, DDP ``module.`` leftovers, and
+    model-vs-checkpoint architecture drift instead of silently loading
+    garbage.
+    """
+    ckpt = torch.load(ckpt_path, map_location=device or "cpu")
+    state = ckpt.get("model_state", ckpt)
+
+    missing, unexpected = model.load_state_dict(state, strict=False)
+
+    if missing:
+        raise ValueError(
+            f"Checkpoint is missing {len(missing)} key(s) required by the model. "
+            f"First 5: {missing[:5]}\n"
+            f"Checkpoint: {ckpt_path}"
+        )
+    if unexpected:
+        raise ValueError(
+            f"Checkpoint has {len(unexpected)} key(s) not present in the model. "
+            f"First 5: {unexpected[:5]}\n"
+            f"Checkpoint: {ckpt_path}"
+        )

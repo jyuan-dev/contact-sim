@@ -24,6 +24,7 @@ if REPO_ROOT not in sys.path:
 from src.models.factory import build_model
 from src.datasets import build_dataloader, DeterministicEpisodeEvalDataset
 from src.metrics import EvaluationSuite
+from src.utils.training_utils import load_checkpoint_state
 
 
 def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch_size=64, device='cpu'):
@@ -134,9 +135,7 @@ def main(cfg: DictConfig):
         sys.exit(1)
 
     model = build_model(cfg_dict).to(device)
-    ckpt_data = torch.load(ckpt_path, map_location=device)
-    state = ckpt_data.get('model_state', ckpt_data)
-    model.load_state_dict(state, strict=False)
+    load_checkpoint_state(model, ckpt_path, device=device)
 
     eval_mode = str(cfg.get('mode', 'deterministic')).lower()
     if eval_mode in ('deterministic', 'full', 'full_val'):

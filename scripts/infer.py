@@ -20,6 +20,7 @@ if REPO_ROOT not in sys.path:
 from src.models.factory import build_model
 from src.datasets.factory import build_dataloader
 from src.utils.vis_utils import render_slot_overlay_frame, save_frames_to_gif
+from src.utils.training_utils import load_checkpoint_state
 
 
 def run_quick_inference(ckpt_path: str, num_sequences: int = 5, out_gif: str = "scratch/quick_infer_demo.gif", device: str = 'cpu'):
@@ -34,8 +35,6 @@ def run_quick_inference(ckpt_path: str, num_sequences: int = 5, out_gif: str = "
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    ckpt = torch.load(ckpt_path, map_location=device)
-
     dataset_cfg = {
         'name': 'pusht',
         'type': 'pusht',
@@ -49,8 +48,7 @@ def run_quick_inference(ckpt_path: str, num_sequences: int = 5, out_gif: str = "
 
     cfg = {'model': {'name': 'deformable_savi', 'type': 'deformable_savi'}}
     model = build_model(cfg).to(device)
-    state_dict = ckpt.get('model_state', ckpt)
-    model.load_state_dict(state_dict, strict=False)
+    load_checkpoint_state(model, ckpt_path, device=device)
     model.eval()
 
     vis_frames = []
