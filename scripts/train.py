@@ -19,7 +19,6 @@ import os
 
 import hydra
 import torch
-from functools import partial
 from omegaconf import DictConfig, OmegaConf
 
 from src.models.factory import build_model
@@ -31,12 +30,9 @@ from src.utils.training_utils import get_device, set_seed
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _save_checkpoint(model, path: str, epoch: int, config: dict = None) -> None:
-    """Save model state dict + epoch + config to ``path``."""
-    save_dict: dict = {"model_state": model.state_dict(), "epoch": epoch}
-    if config is not None:
-        save_dict["config"] = config
-    torch.save(save_dict, path)
+def _save_checkpoint(model, path: str, epoch: int) -> None:
+    """Save model state dict + epoch to ``path``."""
+    torch.save({"model_state": model.state_dict(), "epoch": epoch}, path)
     print(f"Saved checkpoint: {path}")
 
 
@@ -117,7 +113,7 @@ def main(cfg: DictConfig) -> None:
         device=device,
         cfg=train_cfg,
         trainer=trainer,
-        save_checkpoint_fn=partial(_save_checkpoint, config=cfg_dict),
+        save_checkpoint_fn=_save_checkpoint,
     )
 
     trainer.close()

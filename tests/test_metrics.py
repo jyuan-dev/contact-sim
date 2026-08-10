@@ -240,6 +240,132 @@ class TestEvaluationSuite(unittest.TestCase):
         for name in class_names.values():
             self.assertIn(name, metrics['class_metrics'])
 
+    def test_default_class_names(self):
+        """Default class_names should be Block/Agent/Goal."""
+        suite = EvaluationSuite(num_classes=3)
+        pred_masks = self._make_pred_masks()
+        gt_masks_dict = self._make_gt_masks_dict()
+        metrics = suite.evaluate_sequence_masks(pred_masks, gt_masks_dict)
+        for name in ('Block', 'Agent', 'Goal'):
+            self.assertIn(name, metrics['class_metrics'])
+
+
+# ── EvaluationSuite swap-event edge cases ────────────────────────────────────
+
+class TestEvaluationSuiteSwapEvents(unittest.TestCase):
+    """Specific tests for slot-swap detection logic."""
+
+    def test_swapping_assignment_detected(self):
+        """When slots swap class assignment between frames, swaps are counted.
+        With 2 classes both swapping slot association, 2 swap events are expected."""
+        suite = EvaluationSuite(num_classes=2)
+        T, H, W = 3, 32, 32
+        # Frame 0: slot 0 -> class 0, slot 1 -> class 1
+        # Frame 1: slot 0 -> class 1, slot 1 -> class 0  (both classes swap)
+        # Frame 2: same as frame 1 (no new swap)
+        pred_masks = np.zeros((T, 2, H, W), dtype=np.float32)
+        pred_masks[0, 0, :16, :] = 1.0   # slot 0 covers top half
+        pred_masks[0, 1, 16:, :] = 1.0   # slot 1 covers bottom half
+        pred_masks[1, 0, 16:, :] = 1.0   # slot 0 now covers bottom (swapped!)
+        pred_masks[1, 1, :16, :] = 1.0   # slot 1 now covers top
+        pred_masks[2, 0, 16:, :] = 1.0   # same as frame 1
+        pred_masks[2, 1, :16, :] = 1.0
+
+        gt_masks_dict = {
+            0: np.zeros((T, H, W), dtype=np.float32),
+            1: np.zeros((T, H, W), dtype=np.float32),
+        }
+        gt_masks_dict[0][:, :16, :] = 1.0  # class 0 = top half all frames
+        gt_masks_dict[1][:, 16:, :] = 1.0  # class 1 = bottom half all frames
+
+        metrics = suite.evaluate_sequence_masks(pred_masks, gt_masks_dict)
+        # Both classes swap slot association at frame 1 => 2 swap events
+        self.assertEqual(metrics['total_swap_events'], 2)
+
+    def test_occluded_class_no_false_swap(self):
+        """When a class is invisible (all-zero GT) at frame t-1, no swap is counted."""
+        suite = EvaluationSuite(num_classes=2)
+        T, H, W = 3, 32, 32
+        pred_masks = np.zeros((T, 2, H, W), dtype=np.float32)
+        pred_masks[:, 0, :16, :] = 1.0   # slot 0 always top
+        pred_masks[:, 1, 16:, :] = 1.0   # slot 1 always bottom
+
+        gt_masks_dict = {
+            0: np.zeros((T, H, W), dtype=np.float32),
+            1: np.zeros((T, H, W), dtype=np.float32),
+        }
+        gt_masks_dict[0][:, :16, :] = 1.0      # class 0 visible all frames
+        gt_masks_dict[1][0, :, :] = 0.0         # class 1 invisible at frame 0
+        gt_masks_dict[1][1:, 16:, :] = 1.0      # class 1 visible at frames 1-2
+
+        metrics = suite.evaluate_sequence_masks(pred_masks, gt_masks_dict)
+        self.assertEqual(metrics['total_swap_events'], 0)
+
+    def test_class_unmatched_at_t_minus_1_no_crash(self):
+        """When num_classes > num_slots, unmatched classes should not cause
+        IndexError or phantom swaps."""
+        suite = EvaluationSuite(num_classes=3)  # 3 classes, but only 2 slots
+        T, H, W = 3, 32, 32
+        pred_masks = np.zeros((T, 2, H, W), dtype=np.float32)
+        pred_masks[:, 0, :16, :] = 1.0
+        pred_masks[:, 1, 16:, :] = 1.0
+
+        gt_masks_dict = {
+            0: np.zeros((T, H, W), dtype=np.float32),
+            1: np.zeros((T, H, W), dtype=np.float32),
+            2: np.zeros((T, H, W), dtype=np.float32),  # never matched
+        }
+        gt_masks_dict[0][:, :16, :] = 1.0
+        gt_masks_dict[1][:, 16:, :] = 1.0
+
+        metrics = suite.evaluate_sequence_masks(pred_masks, gt_masks_dict)
+        # Should not crash; class 2 never matched, no swaps
+        self.assertIn('total_swap_events', metrics)
+        self.assertIsInstance(metrics['total_swap_events'], int)
+
+
+# ── compute_binary_iou_dice edge cases ───────────────────────────────────────
+
+class TestComputeBinaryIoUDiceEdgeCases(unittest.TestCase):
+    def test_size_mismatch_resizes_gt(self):
+        """When pred and GT have different sizes, GT should be resized."""
+        pred = np.ones((32, 32), dtype=np.float32)
+        gt = np.ones((64, 64), dtype=np.float32)
+        iou, dice = compute_binary_iou_dice(pred, gt)
+        self.assertGreater(iou, 0.9)
+        self.assertGreater(dice, 0.9)
+
+    def test_threshold_default(self):
+        """Default threshold of 0.3 should binarize soft masks."""
+        pred = np.full((32, 32), 0.4, dtype=np.float32)
+        gt = np.ones((32, 32), dtype=np.float32)
+        iou, dice = compute_binary_iou_dice(pred, gt)
+        self.assertAlmostEqual(iou, 1.0)
+        self.assertAlmostEqual(dice, 1.0)
+
+    def test_below_threshold_treated_as_zero(self):
+        """Values below threshold should be treated as background."""
+        pred = np.full((32, 32), 0.2, dtype=np.float32)
+        gt = np.zeros((32, 32), dtype=np.float32)
+        iou, dice = compute_binary_iou_dice(pred, gt)
+        self.assertAlmostEqual(iou, 1.0)
+        self.assertAlmostEqual(dice, 1.0)
+
+    def test_non_square_masks(self):
+        """Non-square rectangular masks should be handled."""
+        pred = np.ones((32, 48), dtype=np.float32)
+        gt = np.ones((32, 48), dtype=np.float32)
+        iou, dice = compute_binary_iou_dice(pred, gt)
+        self.assertAlmostEqual(iou, 1.0)
+        self.assertAlmostEqual(dice, 1.0)
+
+    def test_both_empty_returns_one(self):
+        """Both masks all-zero should return (1.0, 1.0)."""
+        empty = np.zeros((32, 32), dtype=np.float32)
+        iou, dice = compute_binary_iou_dice(empty, empty)
+        self.assertAlmostEqual(iou, 1.0)
+        self.assertAlmostEqual(dice, 1.0)
+
 
 if __name__ == '__main__':
     unittest.main()

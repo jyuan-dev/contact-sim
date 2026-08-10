@@ -170,6 +170,111 @@ class TestPushTMaskDatasetIntegration(unittest.TestCase):
         self.assertGreaterEqual(sample['gt_masks'].min().item(), 0.0)
         self.assertLessEqual(sample['gt_masks'].max().item(), 1.0)
 
+    def test_val_split_no_overlap(self):
+        """Train and val splits should have no overlapping episode indices."""
+        ds_train = PushTMaskHDF5Dataset(
+            h5_path=self.H5_PATH, split="train", resolution=(64, 64),
+            n_sample_frames=6, train_frac=0.8, seed=42,
+        )
+        ds_val = PushTMaskHDF5Dataset(
+            h5_path=self.H5_PATH, split="val", resolution=(64, 64),
+            n_sample_frames=6, train_frac=0.8, seed=42,
+        )
+        train_eps = set(ds_train._episode_indices)
+        val_eps = set(ds_val._episode_indices)
+        self.assertTrue(train_eps.isdisjoint(val_eps))
+
+    def test_deterministic_sampling_same_seed(self):
+        """Same seed should give same sample indices."""
+        ds1 = PushTMaskHDF5Dataset(
+            h5_path=self.H5_PATH, split="train", resolution=(64, 64),
+            n_sample_frames=6, seed=123,
+        )
+        ds2 = PushTMaskHDF5Dataset(
+            h5_path=self.H5_PATH, split="train", resolution=(64, 64),
+            n_sample_frames=6, seed=123,
+        )
+        self.assertEqual(ds1._episode_indices, ds2._episode_indices)
+
+
+# ── GridShapesDataset edge cases ────────────────────────────────────────────
+
+class TestGridShapesDatasetEdgeCases(unittest.TestCase):
+    def test_single_object(self):
+        """Single-object dataset should generate correctly."""
+        ds = GridShapesDataset(num_samples=10, num_frames=6, num_objects=1, img_size=64, seed=0)
+        sample = ds[0]
+        self.assertEqual(sample['img'].shape, (6, 3, 64, 64))
+        self.assertEqual(sample['gt_masks'].shape, (6, 1, 64, 64))
+
+    def test_large_resolution(self):
+        """Larger image resolution should produce correctly sized outputs."""
+        ds = GridShapesDataset(num_samples=5, num_frames=4, num_objects=2, img_size=128, seed=0)
+        sample = ds[0]
+        self.assertEqual(sample['img'].shape, (4, 3, 128, 128))
+
+    def test_many_objects(self):
+        """Many objects should produce correct mask count."""
+        ds = GridShapesDataset(num_samples=5, num_frames=4, num_objects=5, img_size=64, seed=0)
+        sample = ds[0]
+        self.assertEqual(sample['gt_masks'].shape, (4, 5, 64, 64))
+
+    def test_different_seeds_differ(self):
+        """Different seeds should produce different videos."""
+        ds1 = GridShapesDataset(num_samples=5, num_frames=6, num_objects=3, img_size=64, seed=0)
+        ds2 = GridShapesDataset(num_samples=5, num_frames=6, num_objects=3, img_size=64, seed=1)
+        s1 = ds1[0]['img']
+        s2 = ds2[0]['img']
+        self.assertFalse(torch.allclose(s1, s2))
+
+    def test_video_alias_key(self):
+        """GridShapesDataset returns 'img' key (doc mentions 'video' alias but
+        current implementation only returns 'img' and 'gt_masks')."""
+        ds = GridShapesDataset(num_samples=5, num_frames=6, num_objects=3, img_size=64, seed=0)
+        sample = ds[0]
+        self.assertIn('img', sample)
+        self.assertIn('gt_masks', sample)
+        # Verify the shape is correct for the primary image key
+        self.assertEqual(sample['img'].shape, (6, 3, 64, 64))
+
+
+# ── Dataset factory edge cases ────────────────────────────────────────────────
+
+class TestDatasetFactoryEdgeCases(unittest.TestCase):
+    H5_PATH = "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5"
+
+    def test_factory_resolves_gridshapes_resolution_key(self):
+        """Factory should read 'resolution' key for gridshapes."""
+        ds = build_dataset(
+            {'dataset': {'name': 'gridshapes', 'resolution': [32, 32], 'train_samples': 10}},
+            split='train',
+        )
+        sample = ds[0]
+        self.assertEqual(sample['img'].shape[-2:], (32, 32))
+
+    def test_factory_gridshapes_train_vs_val_samples(self):
+        """train_samples and val_samples should give different dataset sizes."""
+        ds_train = build_dataset(
+            {'dataset': {'name': 'gridshapes', 'train_samples': 20, 'val_samples': 5}},
+            split='train',
+        )
+        ds_val = build_dataset(
+            {'dataset': {'name': 'gridshapes', 'train_samples': 20, 'val_samples': 5}},
+            split='val',
+        )
+        self.assertEqual(len(ds_train), 20)
+        self.assertEqual(len(ds_val), 5)
+
+    def test_pusht_via_factory_train_frac(self):
+        """Factory should pass train_frac through to PushT dataset."""
+        if not os.path.exists(self.H5_PATH):
+            self.skipTest("PushT dataset not found.")
+        ds = build_dataset(
+            {'dataset': {'name': 'pusht', 'h5_path': self.H5_PATH, 'train_frac': 0.7}},
+            split='train',
+        )
+        self.assertTrue(len(ds) > 0)
+
 
 if __name__ == '__main__':
     unittest.main()
