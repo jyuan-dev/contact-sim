@@ -3,10 +3,13 @@ type: "savi"
 
 resolution: [64, 64]
 n_sample_frames: 6
+num_slots: 4
+num_iterations: 3
+in_channels: 3
 
-# Paper-aligned defaults: the SAVi wrapper provides correct defaults
-# (num_iterations=3, enc_channels=[3,64,64,64,64], pred_type='transformer',
-#  pred_rnn=True, kld_method='none'). Only override what differs.
+# Paper-aligned defaults: the SAVi wrapper provides correct sub-dict defaults
+# (enc_channels=[3,64,64,64,64], pred_type='transformer', pred_rnn=True, etc.)
+# Only override what differs from those defaults here.
 
 slot_dict:
   num_slots: 4
@@ -19,3 +22,4 @@ weight_dict:
   match_mode: "fixed"
   recon: 1.0
   mask: 1.0
+  sigreg: 0.0

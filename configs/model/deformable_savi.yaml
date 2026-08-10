@@ -1,5 +1,6 @@
 name: "deformable_savi"
 type: "deformable_savi"
+
 resolution: [64, 64]
 n_sample_frames: 6
 num_slots: 4
@@ -7,9 +8,13 @@ slot_dim: 64
 num_iterations: 3
 n_heads: 4
 n_points: 4
+in_channels: 3
+
 loss_dict:
   kld_method: "none"
 
 weight_dict:
   match_mode: "fixed"
-
+  recon: 1.0
+  mask: 1.0
+  sigreg: 0.1

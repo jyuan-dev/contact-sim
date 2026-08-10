@@ -8,6 +8,7 @@ num_encoder_layers: 6
 num_decoder_layers: 6
 dim_feedforward: 512
 train_backbone: false
+eos_coef: 0.1
 
 weight_dict:
   class: 1.0

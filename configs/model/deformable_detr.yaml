@@ -11,8 +11,12 @@ dim_feedforward: 512
 dropout: 0.1
 backbone_name: "resnet18"
 train_backbone: true
+eos_coef: 0.1
 
 weight_dict:
   class: 1.0
   bbox: 5.0
   giou: 2.0
+  class_aux: 1.0
+  bbox_aux: 5.0
+  giou_aux: 2.0
