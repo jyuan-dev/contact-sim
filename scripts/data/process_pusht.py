@@ -10,7 +10,6 @@ Usage:
 """
 
 import argparse
-import subprocess
 
 def main():
     parser = argparse.ArgumentParser(description="PushT Data Processing CLI")

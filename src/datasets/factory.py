@@ -6,7 +6,6 @@ Provides unified factory functions:
   - build_dataloader(cfg, split='train', batch_size=None, num_workers=4) -> PyTorch DataLoader
 """
 
-import os
 import torch
 from torch.utils.data import DataLoader
 

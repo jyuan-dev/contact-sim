@@ -32,7 +32,6 @@ from __future__ import annotations
 from typing import Type
 
 from src.models.base import BaseModelWrapper
-from src.models.model_output import ModelOutput  # re-export convenience
 
 # ── Global registry ──────────────────────────────────────────────────────────
 

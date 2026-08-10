@@ -28,7 +28,6 @@ try:
 except ImportError:          # Python < 3.11
     from typing_extensions import Required, NotRequired
 
-import torch
 from torch import Tensor
 
 # ---------------------------------------------------------------------------

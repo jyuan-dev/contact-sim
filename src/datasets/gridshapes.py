@@ -12,7 +12,6 @@ Conforms to standard dataset dict contract:
   }
 """
 
-import random
 import numpy as np
 import cv2
 import torch

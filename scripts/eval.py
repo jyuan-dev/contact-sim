@@ -24,7 +24,6 @@ if REPO_ROOT not in sys.path:
 from src.models.factory import build_model
 from src.datasets import build_dataloader, DeterministicEpisodeEvalDataset
 from src.metrics import EvaluationSuite
-from src.utils.training_utils import get_device
 
 
 def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch_size=64, device='cpu'):

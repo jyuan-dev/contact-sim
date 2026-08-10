@@ -6,7 +6,6 @@ Uses Cramér-Wold 1D random projections and Epps-Pulley empirical characteristic
 against standard Gaussian N(0, I) to prevent latent representation collapse in self-supervised learning.
 """
 
-import math
 import torch
 import torch.nn as nn
 

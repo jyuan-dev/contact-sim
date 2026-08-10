@@ -5,7 +5,6 @@ Replaces dense global key-value Slot Attention in SAVi with DeformableSlotAttent
 enabling 2D local sampling, spatial reference point prediction, and fast slot updates.
 """
 
-import torch
 import torch.nn as nn
 from src.models.savi import SAVi
 from src.models.deformable_slot_attention import DeformableSlotAttention

@@ -21,14 +21,12 @@ from __future__ import annotations
 import math
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Optional
 
 import numpy as np
 import torch
-import torch.nn as nn
-from torch import Tensor
 from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
 
