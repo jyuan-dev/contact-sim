@@ -53,7 +53,8 @@ def render_slot_overlay_frame(
             m_bin = gt_masks_t[m_idx] > 0.5
             if m_bin.any():
                 contours, _ = cv2.findContours(m_bin.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                color_bgr = GT_COLORS_RGB.get(m_idx, (255, 255, 255))
+                color_rgb = GT_COLORS_RGB.get(m_idx, (255, 255, 255))
+                color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
                 cv2.drawContours(p_gt, contours, -1, color_bgr, 1)
 
     # 2. Right Panel: Color-Coded Slot Mask Overlay
@@ -88,7 +89,7 @@ def render_slot_overlay_frame(
 def save_frames_to_gif(frames: list[np.ndarray], out_gif_path: str, fps: int = 7) -> None:
     """Save list of uint8 RGB frames to infinite looping animated GIF."""
     os.makedirs(os.path.dirname(os.path.abspath(out_gif_path)), exist_ok=True)
-    pil_frames = [Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f in frames]
+    pil_frames = [Image.fromarray(f) for f in frames]
     if pil_frames:
         duration = int(1000 / fps)
         pil_frames[0].save(out_gif_path, save_all=True, append_images=pil_frames[1:], duration=duration, loop=0)

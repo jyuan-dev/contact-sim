@@ -163,10 +163,16 @@ def build_model(cfg) -> BaseModelWrapper:
         loss_fn = build_loss(loss_cfg)
         model_cfg = dict(model_cfg)
         model_cfg["loss_fn"] = loss_fn
+        # Merge only actual loss weight values (skip Hydra metadata keys)
         if isinstance(loss_cfg, dict):
-            weight_dict = dict(model_cfg.get("weight_dict") or {})
-            weight_dict.update(loss_cfg)
-            model_cfg["weight_dict"] = weight_dict
+            _meta_keys = {'_target_', 'losses', 'name', 'type', 'defaults'}
+            loss_weights = {k: v for k, v in loss_cfg.items()
+                            if not k.startswith('_') and k not in _meta_keys
+                            and isinstance(v, (int, float))}
+            if loss_weights:
+                weight_dict = dict(model_cfg.get("weight_dict") or {})
+                weight_dict.update(loss_weights)
+                model_cfg["weight_dict"] = weight_dict
 
     return cls.build(model_cfg)
 
