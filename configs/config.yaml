@@ -1,8 +1,10 @@
 defaults:
   - model: savi
   - dataset: pusht
+  - loss: savi_default
   - optional experiment: null
   - _self_
+
 
 exp_name: ${model.name}_${dataset.name}
 seed: 42
@@ -18,3 +20,7 @@ dry_run: false
 max_steps: null
 ckpt_path: null
 use_amp: true
+mode: deterministic
+clips_per_ep: 2
+device: cuda
+

@@ -154,4 +154,20 @@ def build_model(cfg) -> BaseModelWrapper:
         )
 
     cls = _MODEL_REGISTRY[model_type]
+
+    # Instantiate loss module from Hydra loss config if present
+    loss_cfg = cfg.get("loss")
+    if loss_cfg is not None:
+        from src.losses import build_loss
+
+        loss_fn = build_loss(loss_cfg)
+        model_cfg = dict(model_cfg)
+        model_cfg["loss_fn"] = loss_fn
+        if isinstance(loss_cfg, dict):
+            weight_dict = dict(model_cfg.get("weight_dict") or {})
+            weight_dict.update(loss_cfg)
+            model_cfg["weight_dict"] = weight_dict
+
     return cls.build(model_cfg)
+
+

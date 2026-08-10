@@ -31,9 +31,15 @@ class StandardizedSAViWrapper(BaseModelWrapper):
       - Delegate loss to ``src.losses.savi_loss.compute_savi_loss``
     """
 
-    def __init__(self, model: nn.Module, weight_dict: dict | None = None) -> None:
+    def __init__(
+        self,
+        model: nn.Module,
+        weight_dict: dict | None = None,
+        loss_fn: nn.Module | None = None,
+    ) -> None:
         super().__init__()
         self.model = model
+        self.loss_fn = loss_fn
         self._weight_dict = weight_dict or {"recon": 1.0, "mask": 1.0}
 
     # ------------------------------------------------------------------
@@ -65,9 +71,10 @@ class StandardizedSAViWrapper(BaseModelWrapper):
         weight_dict = dict(model_cfg.get("weight_dict") or {})
         weight_dict.setdefault("recon", 1.0)
         weight_dict.setdefault("mask", 1.0)
-        weight_dict.setdefault("sigreg", 0.0)
 
-        return cls(base_model, weight_dict=weight_dict)
+        loss_fn = model_cfg.get("loss_fn")
+
+        return cls(base_model, weight_dict=weight_dict, loss_fn=loss_fn)
 
     # ------------------------------------------------------------------
     # forward / compute_loss
@@ -118,7 +125,11 @@ class StandardizedSAViWrapper(BaseModelWrapper):
     def compute_loss(
         self, out: ModelOutput, batch: dict
     ) -> tuple[Tensor, dict[str, float]]:
-        """Compute SAVi reconstruction + mask + optional SIGReg loss."""
-        from src.losses.savi_loss import compute_savi_loss
+        """Compute model loss via configured loss module."""
+        if self.loss_fn is None:
+            from src.losses import build_loss
 
-        return compute_savi_loss(out, batch, weight_dict=self._weight_dict)
+            self.loss_fn = build_loss(None)
+        return self.loss_fn(out, batch)
+
+

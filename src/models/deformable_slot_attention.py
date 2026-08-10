@@ -5,6 +5,7 @@ Combines 2D Deformable Attention (Zhu et al., ICLR 2021) with Slot Attention
 iterative competitive refinement (Locatello et al., NeurIPS 2020) and GRU slot state updates.
 
 Provides:
+  - MultiScaleDeformableAttention: Pure PyTorch 2D Deformable Attention module.
   - DeformableSlotAttention: Iterative slot attention with learned 2D reference points,
     deformable sampling offsets, and GRU slot state recurrence.
 """
@@ -14,7 +15,122 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.models.deformable_detr import MultiScaleDeformableAttention
+
+class MultiScaleDeformableAttention(nn.Module):
+    """
+    Multi-Scale Deformable Attention Module (Pure PyTorch implementation).
+    Ref: Zhu et al., Deformable DETR (ICLR 2021).
+    """
+
+    def __init__(self, d_model=64, n_levels=1, n_heads=4, n_points=4):
+        super().__init__()
+        if d_model % n_heads != 0:
+            raise ValueError(f"d_model ({d_model}) must be divisible by n_heads ({n_heads})")
+
+        self.d_model = d_model
+        self.n_levels = n_levels
+        self.n_heads = n_heads
+        self.n_points = n_points
+        self.d_head = d_model // n_heads
+
+        self.sampling_offsets = nn.Linear(d_model, n_heads * n_levels * n_points * 2)
+        self.attention_weights = nn.Linear(d_model, n_heads * n_levels * n_points)
+        self.value_proj = nn.Linear(d_model, d_model)
+        self.output_proj = nn.Linear(d_model, d_model)
+
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        nn.init.constant_(self.sampling_offsets.weight, 0.0)
+        # Initialize sampling offsets in 4 cardinal directions per head
+        thetas = torch.arange(self.n_heads, dtype=torch.float32) * (2.0 * math.pi / self.n_heads)
+        grid_init = torch.stack([torch.cos(thetas), torch.sin(thetas)], dim=-1)
+        grid_init = (grid_init / grid_init.abs().max(dim=-1, keepdim=True)[0]).view(
+            self.n_heads, 1, 1, 2
+        ).repeat(1, self.n_levels, self.n_points, 1)
+        for i in range(self.n_points):
+            grid_init[:, :, i, :] *= i + 1
+
+        with torch.no_grad():
+            self.sampling_offsets.bias = nn.Parameter(grid_init.view(-1))
+        nn.init.constant_(self.attention_weights.weight, 0.0)
+        nn.init.constant_(self.attention_weights.bias, 0.0)
+        nn.init.xavier_uniform_(self.value_proj.weight)
+        nn.init.constant_(self.value_proj.bias, 0.0)
+        nn.init.xavier_uniform_(self.output_proj.weight)
+        nn.init.constant_(self.output_proj.bias, 0.0)
+
+    def forward(
+        self,
+        query,
+        reference_points,
+        input_flatten,
+        input_spatial_shapes,
+        input_level_start_index,
+    ):
+        """
+        Args:
+            query: [B, Len_q, C]
+            reference_points: [B, Len_q, n_levels, 2] in [0, 1]
+            input_flatten: [B, Len_in, C]
+            input_spatial_shapes: [n_levels, 2] (H, W per level)
+            input_level_start_index: [n_levels]
+        """
+        B, Len_q, C = query.shape
+        _, Len_in, _ = input_flatten.shape
+
+        value = self.value_proj(input_flatten)
+        value = value.view(B, Len_in, self.n_heads, self.d_head)
+
+        sampling_offsets = self.sampling_offsets(query).view(
+            B, Len_q, self.n_heads, self.n_levels, self.n_points, 2
+        )
+        attention_weights = self.attention_weights(query).view(
+            B, Len_q, self.n_heads, self.n_levels * self.n_points
+        )
+        attention_weights = F.softmax(attention_weights, dim=-1).view(
+            B, Len_q, self.n_heads, self.n_levels, self.n_points
+        )
+
+        offset_normalizer = torch.stack(
+            [input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], dim=-1
+        ).to(query.device, dtype=query.dtype)
+
+        sampling_locations = (
+            reference_points.unsqueeze(2).unsqueeze(4)
+            + sampling_offsets / offset_normalizer.unsqueeze(0).unsqueeze(0).unsqueeze(0)
+        )
+
+        # Bilinear sampling per level
+        output = torch.zeros(B, Len_q, self.n_heads, self.d_head, device=query.device, dtype=query.dtype)
+
+        for l_idx in range(self.n_levels):
+            H, W = int(input_spatial_shapes[l_idx, 0]), int(input_spatial_shapes[l_idx, 1])
+            start_idx = int(input_level_start_index[l_idx])
+            end_idx = start_idx + H * W
+
+            value_l = value[:, start_idx:end_idx].view(B, H, W, self.n_heads, self.d_head)
+            value_l = value_l.permute(0, 3, 4, 1, 2).reshape(B * self.n_heads, self.d_head, H, W)
+
+            # Sampling locations for level l: [B, Len_q, n_heads, n_points, 2] -> [B*n_heads, Len_q, n_points, 2]
+            sampling_locs_l = sampling_locations[:, :, :, l_idx].permute(0, 2, 1, 3, 4).reshape(
+                B * self.n_heads, Len_q, self.n_points, 2
+            )
+            # Map [0, 1] coordinates -> [-1, 1] for grid_sample
+            grid = 2.0 * sampling_locs_l - 1.0
+
+            # Sample features: [B*n_heads, d_head, Len_q, n_points]
+            sampled_feat = F.grid_sample(
+                value_l, grid, mode='bilinear', padding_mode='zeros', align_corners=False
+            )
+            sampled_feat = sampled_feat.view(B, self.n_heads, self.d_head, Len_q, self.n_points)
+            sampled_feat = sampled_feat.permute(0, 3, 1, 4, 2)  # [B, Len_q, n_heads, n_points, d_head]
+
+            attn_l = attention_weights[:, :, :, l_idx].unsqueeze(-1)  # [B, Len_q, n_heads, n_points, 1]
+            output += (sampled_feat * attn_l).sum(dim=3)  # Sum over n_points
+
+        output = output.reshape(B, Len_q, C)
+        return self.output_proj(output)
 
 
 class DeformableSlotAttention(nn.Module):
@@ -23,15 +139,6 @@ class DeformableSlotAttention(nn.Module):
 
     Iteratively updates slot representations by sampling local 2D deformable locations
     on spatial feature maps rather than performing dense global cross-attention.
-
-    Args:
-        num_slots (int): Number of slots K (default: 4).
-        slot_dim (int): Slot feature dimension D (default: 64).
-        num_iterations (int): Number of Slot Attention iterations per frame (default: 3).
-        n_heads (int): Number of deformable attention heads (default: 4).
-        n_points (int): Number of sampling points per head (default: 4).
-        n_levels (int): Number of feature levels (default: 1).
-        eps (float): Epsilon for numerical stability (default: 1e-8).
     """
 
     def __init__(
@@ -100,7 +207,6 @@ class DeformableSlotAttention(nn.Module):
             updated_slots (Tensor): Updated slot representations [B, K, slot_dim].
             ref_points (Tensor): Predicted 2D reference coordinates [B, K, 2] in [0, 1].
         """
-        # Normalize and reshape inputs to flattened format
         if inputs.ndim == 4:
             B, C, H, W = inputs.shape
             spatial_shapes = torch.tensor([[H, W]], device=inputs.device, dtype=torch.long)

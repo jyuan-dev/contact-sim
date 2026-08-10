@@ -1,0 +1,13 @@
+# SAVi Composite Loss with SIGReg Regularization (Hydra Instantiated)
+_target_: src.losses.composite.CompositeLoss
+losses:
+  recon:
+    _target_: src.losses.recon_loss.ReconstructionMSELoss
+    weight: 1.0
+  mask:
+    _target_: src.losses.mask_loss.MaskSegmentationLoss
+    weight: 1.0
+    match_mode: fixed
+  sigreg:
+    _target_: src.losses.sigreg.SIGRegLoss
+    weight: 0.1

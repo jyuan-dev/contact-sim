@@ -147,5 +147,8 @@ def compute_sigreg_stat(post_slots: torch.Tensor, sketch_dim: int = 64) -> float
         - Lower values indicate slot representations are more isotropic / Gaussian.
     """
     from src.losses.sigreg import SIGRegLoss
-    return float(SIGRegLoss(sketch_dim=sketch_dim)(post_slots).item())
+    res = SIGRegLoss(sketch_dim=sketch_dim)(post_slots)
+    val = res[1] if isinstance(res, tuple) else (res.item() if hasattr(res, "item") else float(res))
+    return float(val)
+
 
