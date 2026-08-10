@@ -71,9 +71,14 @@ class EvaluationSuite:
                 slot_ious[class_idx].append(best_iou)
                 slot_dices[class_idx].append(best_dice)
 
-                # Check for Slot Swap Event
-                if t > 0 and (gt_masks_dict[class_idx][t].sum() > 0):
-                    prev_slot = slot_assignments[class_idx][t - 1]
+                # Check for Slot Swap Event — only meaningful when the class
+                # was visible (non-empty GT mask) in both the current and the
+                # previous frame, and had a valid assignment at t-1.
+                if (t > 0
+                        and len(slot_assignments[class_idx]) >= 2
+                        and (gt_masks_dict[class_idx][t].sum() > 0)
+                        and (gt_masks_dict[class_idx][t - 1].sum() > 0)):
+                    prev_slot = slot_assignments[class_idx][-2]
                     if prev_slot != slot_idx:
                         swap_events.append({
                             'frame': t,

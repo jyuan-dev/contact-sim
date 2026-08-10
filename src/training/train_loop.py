@@ -72,6 +72,10 @@ class TrainConfig:
     # LR scheduler (reserved for future use; currently unused)
     scheduler: Optional[str] = None
 
+    # Scheduler hyperparameters
+    warmup_steps: int = 1000
+    min_lr: float = 1e-5
+
     @classmethod
     def from_cfg(cls, cfg: dict, ckpt_dir: str, model_name: str) -> "TrainConfig":
         """Construct a ``TrainConfig`` from a fully-resolved config dict."""
@@ -90,6 +94,8 @@ class TrainConfig:
             ckpt_dir=ckpt_dir,
             model_name=model_name,
             scheduler=cfg.get("scheduler"),
+            warmup_steps=int(cfg.get("warmup_steps", 1000)),
+            min_lr=float(cfg.get("min_lr", 1e-5)),
         )
 
 
@@ -164,13 +170,16 @@ def run_epoch(
             video = batch["img"].to(device, non_blocking=True)
 
             try:
-                with torch.amp.autocast("cuda", enabled=cfg.use_amp):
+                with torch.amp.autocast(device.type, enabled=cfg.use_amp):
                     out = model(video)
                     loss, loss_dict = model.compute_loss(out, batch)
             except ValueError as err:
+                import traceback
                 if is_train:
                     print("\n" + "!" * 80)
                     print(f"⚠️  [CRITICAL WARNING / NAN AT SOURCE] Step [{global_step + 1}]: {err}")
+                    print("   Full traceback follows for diagnosis:")
+                    traceback.print_exc()
                     print("   Skipping optimizer update for this batch.")
                     print("!" * 80 + "\n")
                     continue
@@ -198,6 +207,16 @@ def run_epoch(
                 )
                 scaler.step(optimizer)
                 scaler.update()
+
+                # ── Per-step LR scheduling ────────────────────────────────
+                if cfg.scheduler == 'cosine':
+                    from src.utils.training_utils import cosine_anneal_with_warmup
+                    new_lr = cosine_anneal_with_warmup(
+                        global_step, total_target_steps, cfg.warmup_steps,
+                        cfg.lr, cfg.min_lr,
+                    )
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = new_lr
 
             # ── Logging ───────────────────────────────────────────────────
             loss_val = loss.item()

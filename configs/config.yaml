@@ -42,7 +42,7 @@ scheduler: null         # Optional LR scheduler: 'cosine' (warmup + cosine decay
 
 # ── 4. Execution, Hardware & Debugging Settings ──────────────────────────────
 dry_run: false          # Fast debug mode: if true, caps epoch at 5 batches and runs 1 epoch to verify pipeline
-max_steps: null         # Maximum training steps per epoch (set integer like 100 to shorten epoch, or null for full epoch)
+max_steps: null         # Global maximum training steps across all epochs (set integer to limit total steps, or null for unlimited)
 ckpt_path: null         # File path to .pt checkpoint to resume training or evaluate (null = train from scratch)
 use_amp: true           # Enable Automatic Mixed Precision (torch.cuda.amp) for FP16 accelerated execution on GPU
 device: cuda            # Execution compute hardware device: 'cuda' (NVIDIA GPU) or 'cpu'
