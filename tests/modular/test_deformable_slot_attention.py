@@ -1,6 +1,6 @@
 """
-Tests for src/models/deformable_slot_attention.py.
-Covers: MultiScaleDeformableAttention, DeformableSlotAttention.
+Tests for deformable attention and slot attention modules.
+Covers: MultiScaleDeformableAttention, DeformableSlotAttention (now in deformable_savi.py).
 """
 
 import math
@@ -8,7 +8,7 @@ import unittest
 
 import torch
 
-from src.models.deformable_slot_attention import (
+from src.models.deformable_savi import (
     MultiScaleDeformableAttention,
     DeformableSlotAttention,
 )

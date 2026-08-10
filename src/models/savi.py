@@ -12,7 +12,15 @@ BASE_SLOTS_DIR = os.path.join(SLOTFORMER_DIR, 'slotformer', 'base_slots')
 _SAVI_SETUP_DONE = False
 
 
+
 def _setup_savi_imports():
+    """
+    Set up synthetic 'nerv' module stubs and python path bindings.
+
+    This function creates in-memory mock modules for 'nerv' (nerv.training, nerv.models)
+    and adds third_party/slotformer to sys.path so that third-party StoSAVi can be
+    imported without editing third-party source files or installing external dependencies.
+    """
     global _SAVI_SETUP_DONE
     if _SAVI_SETUP_DONE:
         return
@@ -77,6 +85,7 @@ def _setup_savi_imports():
 
 
 _setup_savi_imports()
+
 
 # Clear stale 'models' package so `from models.savi import StoSAVi` resolves
 # to third_party/slotformer/slotformer/base_slots/models/savi.py.
