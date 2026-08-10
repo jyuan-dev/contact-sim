@@ -3,8 +3,8 @@
 Quick Inspection & Visualization CLI Tool for SAVi / Deformable SAVi Checkpoints.
 
 Usage:
-  python scripts/infer.py --ckpt_path scratch/checkpoints/deformable_savi_3class_1ep/deformable_savi_best.pt
-  python scripts/infer.py --ckpt_path scratch/checkpoints/deformable_savi_1ep_with_sigreg/deformable_savi_best.pt --num_sequences 5
+  python scripts/infer.py --ckpt_path scratch/checkpoints/savi_pusht/savi_best.pt
+  python scripts/infer.py --ckpt_path scratch/checkpoints/deformable_savi_pusht/deformable_savi_best.pt --num_sequences 5
 """
 
 import os
@@ -12,8 +12,6 @@ import sys
 import argparse
 import numpy as np
 import torch
-import cv2
-from PIL import Image
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -21,24 +19,10 @@ if REPO_ROOT not in sys.path:
 
 from src.models.factory import build_model
 from src.datasets.factory import build_dataloader
-from src.utils.training_utils import get_device
-
-SLOT_COLORS_RGB = {
-    0: (255, 40, 40),     # Slot 0: Red (Agent)
-    1: (40, 220, 40),     # Slot 1: Green (T-Block)
-    2: (40, 120, 255),    # Slot 2: Blue (Goal Target)
-    3: (255, 210, 0),     # Slot 3: Yellow
-    4: (230, 40, 230)     # Slot 4: Magenta
-}
-
-GT_COLORS_RGB = {
-    0: (255, 140, 0),    # Orange
-    1: (0, 230, 115),    # Green
-    2: (0, 128, 255)     # Blue
-}
+from src.utils.vis_utils import render_slot_overlay_frame, save_frames_to_gif
 
 
-def run_quick_inference(ckpt_path, num_sequences=5, out_gif="scratch/quick_infer_demo.gif", device='cpu'):
+def run_quick_inference(ckpt_path: str, num_sequences: int = 5, out_gif: str = "scratch/quick_infer_demo.gif", device: str = 'cpu'):
     print("=" * 80)
     print(f"Quick Inspection & Visual Inference: {ckpt_path}")
     print(f"  Sequences: {num_sequences} | Device: {device} | Output GIF: {out_gif}")
@@ -70,7 +54,6 @@ def run_quick_inference(ckpt_path, num_sequences=5, out_gif="scratch/quick_infer
     val_loader = build_dataloader({'dataset': dataset_cfg}, split='val', batch_size=1, num_workers=2, shuffle=False)
 
     model = build_model(cfg).to(device)
-
     state_dict = ckpt['model_state'] if 'model_state' in ckpt else ckpt
     model.load_state_dict(state_dict, strict=False)
     model.eval()
@@ -91,8 +74,8 @@ def run_quick_inference(ckpt_path, num_sequences=5, out_gif="scratch/quick_infer
                 mse = torch.mean((recon - video) ** 2).item()
                 mses.append(mse)
 
-            pred_masks = out.get('pred_masks', None)  # [1, T, K, 64, 64]
-            gt_masks = batch.get('gt_masks', None)     # [1, T, M, 64, 64]
+            pred_masks = out.get('pred_masks', None)
+            gt_masks = batch.get('gt_masks', None)
 
             T = video.shape[1]
             video_np = ((video[0].cpu().permute(0, 2, 3, 1).numpy() * 0.5 + 0.5) * 255.0).clip(0, 255).astype(np.uint8)
@@ -101,56 +84,22 @@ def run_quick_inference(ckpt_path, num_sequences=5, out_gif="scratch/quick_infer
 
             for t in range(T):
                 frame_rgb = video_np[t]
-                if frame_rgb.shape[:2] != (64, 64):
-                    frame_rgb = cv2.resize(frame_rgb, (64, 64), interpolation=cv2.INTER_LINEAR)
-
-                # Left Panel: Ground Truth Outlines
-                p_gt = frame_rgb.copy()
-                if gt_masks_np is not None:
-                    for m_idx in range(gt_masks_np.shape[1]):
-                        m_bin = gt_masks_np[t, m_idx] > 0.5
-                        if m_bin.any():
-                            contours, _ = cv2.findContours(m_bin.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                            color_bgr = GT_COLORS_RGB.get(m_idx, (255, 255, 255))
-                            cv2.drawContours(p_gt, contours, -1, color_bgr, 1)
-
-                # Right Panel: Color-Coded Slot Mask Overlay
-                p_slots = frame_rgb.copy().astype(np.float32)
-                masks_t = pred_masks_np[t]
-                K = masks_t.shape[0]
-
-                slot_map = np.zeros((64, 64, 3), dtype=np.float32)
-                weight_sum = np.zeros((64, 64, 1), dtype=np.float32)
-                for k in range(K):
-                    m_k = np.clip(masks_t[k], 0, 1)[..., None]
-                    color_k = np.array(SLOT_COLORS_RGB[k % len(SLOT_COLORS_RGB)], dtype=np.float32)
-                    slot_map += m_k * color_k
-                    weight_sum += m_k
-
-                weight_sum = np.maximum(weight_sum, 1e-6)
-                slot_composite = slot_map / weight_sum
-                active_mask = (weight_sum > 0.15)
-                alpha = 0.60
-                p_slots[active_mask[:, :, 0]] = (1.0 - alpha) * p_slots[active_mask[:, :, 0]] + alpha * slot_composite[active_mask[:, :, 0]]
-                p_slots_uint8 = np.clip(p_slots, 0, 255).astype(np.uint8)
-
-                combined = np.hstack([p_gt, p_slots_uint8])
-                combined_large = cv2.resize(combined, (480, 240), interpolation=cv2.INTER_NEAREST)
-
+                gt_t = gt_masks_np[t] if gt_masks_np is not None else None
                 banner_text = f"Seq {b_idx+1}/{num_sequences} Frame {t+1}/{T} | MSE: {mses[-1]:.6f}"
-                cv2.rectangle(combined_large, (0, 0), (combined_large.shape[1], 18), (30, 140, 220), -1)
-                cv2.putText(combined_large, banner_text, (8, 13), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1, cv2.LINE_AA)
 
-                vis_frames.append(combined_large)
+                combined_frame = render_slot_overlay_frame(
+                    frame_rgb=frame_rgb,
+                    pred_masks_t=pred_masks_np[t],
+                    gt_masks_t=gt_t,
+                    banner_text=banner_text,
+                )
+                vis_frames.append(combined_frame)
 
     print("\n---------------- Quick Inspection Report ----------------")
     print(f"Inspected Sequences:         {num_sequences}")
-    print(f"Mean Reconstruction MSE:     {np.mean(mses):.6f}")
+    print(f"Mean Reconstruction MSE:     {np.mean(mses):.6f}" if mses else "N/A")
 
-    os.makedirs("scratch", exist_ok=True)
-    pil_frames = [Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f in vis_frames]
-    if pil_frames:
-        pil_frames[0].save(out_gif, save_all=True, append_images=pil_frames[1:], duration=150, loop=0)
+    save_frames_to_gif(vis_frames, out_gif, fps=7)
     print(f"Saved Quick Inspection GIF to: {out_gif}")
     print("----------------------------------------------------------\n")
 
