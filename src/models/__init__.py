@@ -22,9 +22,6 @@ from src.models.base import BaseModelWrapper
 from src.models.factory import build_model, register_model, list_models
 from src.models.savi import SAVi
 
-from src.models.factory import _ensure_wrappers_imported as _load_wrappers
-_load_wrappers()
-
 from src.models.wrappers import (
     StandardizedSAViWrapper,
     StandardizedDeformableSAViWrapper,

@@ -70,9 +70,6 @@ def main(cfg: DictConfig) -> None:
         if not os.path.isabs(ckpt_path):
             ckpt_path = os.path.join(REPO_ROOT, ckpt_path)
         ckpt = torch.load(ckpt_path, map_location=device)
-        if "config" in ckpt and isinstance(ckpt["config"], dict) and "model" in ckpt["config"]:
-            cfg_dict["model"] = ckpt["config"]["model"]
-            model_name = cfg_dict["model"].get("name", model_name)
         model = build_model(cfg_dict).to(device)
         state_dict = ckpt.get("model_state", ckpt)
         model.load_state_dict(state_dict, strict=True)
