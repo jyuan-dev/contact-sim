@@ -8,9 +8,19 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 class TeeLogger:
-    def __init__(self, filepath):
+    """
+    Duplicates stdout stream to both the terminal console and a log file on disk.
+
+    Args:
+        filepath (str): Absolute or relative path to the target log file.
+        mode (str): File open mode for writing log messages.
+            Candidate Options:
+                - 'a' (Append, Default): Appends new log messages to the end of an existing log file.
+                - 'w' (Overwrite): Overwrites and truncates any existing log file at startup.
+    """
+    def __init__(self, filepath: str, mode: str = 'a'):
         self.terminal = sys.stdout
-        self.log_file = open(filepath, 'a', buffering=1)
+        self.log_file = open(filepath, mode, buffering=1)
 
     def write(self, message):
         self.terminal.write(message)
@@ -24,8 +34,21 @@ class TeeLogger:
         if not self.log_file.closed:
             self.log_file.close()
 
+
 class BaseTrainer:
-    def __init__(self, save_dir: str, experiment_name: str = "exp"):
+    """
+    Base Trainer class encapsulating TensorBoard logging, dedicated file logging,
+    checkpoint management, and experiment workspace state.
+
+    Args:
+        save_dir (str): Directory where logs and checkpoints will be saved.
+        experiment_name (str): Unique name of the experiment.
+        mode (str): Log file opening mode for stdout redirection.
+            Candidate Options:
+                - 'a' (Append, Default): Appends stdout to an existing train.log file.
+                - 'w' (Overwrite): Truncates train.log at startup to start a fresh log.
+    """
+    def __init__(self, save_dir: str, experiment_name: str = "exp", mode: str = 'a'):
         self.save_dir = save_dir
         self.experiment_name = experiment_name
         os.makedirs(self.save_dir, exist_ok=True)
@@ -34,11 +57,11 @@ class BaseTrainer:
         os.makedirs(tb_log_dir, exist_ok=True)
         self.writer = SummaryWriter(log_dir=tb_log_dir)
 
-        # Setup dedicated file logging in both save_dir and tb_logs
+        # Setup dedicated file logging in save_dir
         self.log_path = os.path.join(self.save_dir, 'train.log')
         self.tb_log_path = os.path.join(tb_log_dir, 'train.log')
         
-        self.tee = TeeLogger(self.log_path)
+        self.tee = TeeLogger(self.log_path, mode=mode)
         sys.stdout = self.tee
 
         print(f"[{self.experiment_name}] TensorBoard logs: {tb_log_dir}", flush=True)
