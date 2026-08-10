@@ -1,7 +1,8 @@
 defaults:
-  - model: savi
+  - model: deformable_savi
   - dataset: pusht
   - loss: savi_default
+
   - optional experiment: null
   - _self_
 

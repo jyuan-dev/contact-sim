@@ -49,7 +49,8 @@ def run_quick_inference(ckpt_path: str, num_sequences: int = 5, out_gif: str = "
     if 'dataset' not in cfg:
         cfg['dataset'] = dataset_cfg
     if 'model' not in cfg:
-        cfg['model'] = {'name': 'savi', 'type': 'savi'}
+        cfg['model'] = {'name': 'deformable_savi', 'type': 'deformable_savi'}
+
 
     val_loader = build_dataloader({'dataset': dataset_cfg}, split='val', batch_size=1, num_workers=2, shuffle=False)
 
