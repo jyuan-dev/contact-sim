@@ -1,7 +1,15 @@
-name: "pusht"
-type: "pusht"
-h5_path: "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5"
-resolution: [64, 64]
-n_sample_frames: 6
-frame_offset: 1
-train_frac: 0.8
+# ==============================================================================
+# PushT HDF5 Dataset Configuration
+# ==============================================================================
+# Overview:
+#   Configuration for PushT robotic manipulation expert dataset stored in HDF5.
+#   Provides 64x64 video frames and ground-truth segmentation masks (Agent, Block, Goal).
+# ==============================================================================
+
+name: "pusht"                                                 # Unique dataset name identifier
+type: "pusht"                                                 # Registered dataset type in src.datasets.factory
+h5_path: "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5" # Absolute file path to PushT HDF5 dataset file
+resolution: [64, 64]                                          # Image spatial resolution [Height, Width]
+n_sample_frames: 6                                            # Number of consecutive temporal frames per clip (T)
+frame_offset: 1                                               # Frame sampling stride/step between consecutive clip frames
+train_frac: 0.8                                               # Fraction of episodes assigned to train split (remainder for val)

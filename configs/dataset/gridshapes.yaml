@@ -1,7 +1,14 @@
-name: "gridshapes"
-type: "gridshapes"
-resolution: [64, 64]
-n_sample_frames: 16
-num_objects: 3
-train_samples: 1000
-val_samples: 200
+# ==============================================================================
+# GridShapes Synthetic Dataset Configuration
+# ==============================================================================
+# Overview:
+#   Synthetic dataset generating moving 2D shapes on a grid for fast sanity checks.
+# ==============================================================================
+
+name: "gridshapes"            # Unique dataset name identifier
+type: "gridshapes"            # Registered dataset type in src.datasets.factory
+resolution: [64, 64]          # Spatial image resolution [Height, Width]
+n_sample_frames: 16           # Number of temporal video frames per generated video sequence
+num_objects: 3                # Number of distinct geometric objects per frame
+train_samples: 1000           # Total number of generated training samples
+val_samples: 200              # Total number of generated validation samples

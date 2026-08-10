@@ -1,13 +1,23 @@
-# SAVi Composite Loss with Temporal Contrastive Regularization (Hydra Instantiated)
-_target_: src.losses.composite.CompositeLoss
+# ==============================================================================
+# Composite Loss with Temporal Slot Contrastive Regularization Configuration
+# ==============================================================================
+# Overview:
+#   Instantiates src.losses.composite.CompositeLoss via Hydra with:
+#     1. ReconstructionMSELoss (weight = 1.0)
+#     2. MaskSegmentationLoss (weight = 1.0, match_mode = fixed)
+#     3. TemporalSlotContrastiveLoss (weight = 0.1) — InfoNCE across video timesteps
+# ==============================================================================
+
+_target_: src.losses.composite.CompositeLoss  # Target Python class to instantiate via hydra.utils.instantiate
+
 losses:
   recon:
-    _target_: src.losses.recon_loss.ReconstructionMSELoss
-    weight: 1.0
+    _target_: src.losses.recon_loss.ReconstructionMSELoss # Sub-loss target class for image reconstruction
+    weight: 1.0                                             # Loss weighting coefficient multiplier for recon MSE
   mask:
-    _target_: src.losses.mask_loss.MaskSegmentationLoss
-    weight: 1.0
-    match_mode: fixed
+    _target_: src.losses.mask_loss.MaskSegmentationLoss    # Sub-loss target class for mask segmentation
+    weight: 1.0                                             # Loss weighting coefficient multiplier for mask loss
+    match_mode: fixed                                       # Slot-to-mask assignment mode: 'fixed' or 'hungarian'
   contrastive:
-    _target_: src.losses.contrastive.TemporalSlotContrastiveLoss
-    weight: 0.1
+    _target_: src.losses.contrastive.TemporalSlotContrastiveLoss # Sub-loss target class for temporal InfoNCE contrastive loss
+    weight: 0.1                                                   # Loss weighting coefficient multiplier for contrastive term

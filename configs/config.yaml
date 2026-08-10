@@ -1,27 +1,44 @@
+# ==============================================================================
+# Main Hydra Configuration File (contact-sim)
+# ==============================================================================
+# Overview:
+#   This file defines global experiment parameters, training hyperparameters,
+#   device settings, and default composition groups (model, dataset, loss).
+#
+# Usage Examples:
+#   python scripts/train.py
+#   python scripts/train.py model=savi loss=savi_sigreg batch_size=64 lr=1e-4
+#   python scripts/train.py dry_run=true
+# ==============================================================================
+
+# ── 1. Hydra Defaults Composition Group ──────────────────────────────────────
 defaults:
-  - model: deformable_savi
-  - dataset: pusht
-  - loss: savi_default
+  - model: deformable_savi     # Default model architecture: 'deformable_savi' or 'savi'
+  - dataset: pusht             # Default dataset configuration: 'pusht' or 'gridshapes'
+  - loss: savi_default         # Default composite loss: 'savi_default', 'savi_sigreg', or 'savi_contrastive'
+  - optional experiment: null  # Optional experiment override (e.g. 'savi_pusht')
+  - _self_                     # Allow keys in this file to override defaults
 
-  - optional experiment: null
-  - _self_
+# ── 2. Experiment Metadata & Randomness ──────────────────────────────────────
+exp_name: ${model.name}_${dataset.name} # Auto-generated experiment identifier used for log & checkpoint paths
+seed: 42                                 # Global random seed for PyTorch, NumPy, and Python for reproducible runs
 
+# ── 3. Optimization Hyperparameters ─────────────────────────────────────────
+epochs: 8               # Total number of training epochs
+batch_size: 128         # Batch size per training iteration across worker GPUs
+num_workers: 8          # Number of PyTorch DataLoader multiprocessing worker sub-processes
+lr: 2e-4                # Base Adam/AdamW learning rate
+weight_decay: 1e-4      # L2 weight decay regularization coefficient
+grad_clip_norm: 1.0     # Maximum gradient norm for gradient clipping (prevents exploding gradients)
+scheduler: null         # Optional learning rate scheduler ('cosine', 'step', or null for constant LR)
 
-exp_name: ${model.name}_${dataset.name}
-seed: 42
-epochs: 8
-batch_size: 128
-num_workers: 8
-lr: 2e-4
-weight_decay: 1e-4
-grad_clip_norm: 1.0
-scheduler: null
+# ── 4. Runtime & Debug Settings ──────────────────────────────────────────────
+dry_run: false          # Fast debugging flag: if true, runs only 5 train/val steps and stops early
+max_steps: null         # Maximum training steps per epoch (set integer to cap epoch length, or null for full epoch)
+ckpt_path: null         # Path to pre-trained checkpoint .pt file for resume or evaluation (null = train from scratch)
+use_amp: true           # Enable Automatic Mixed Precision (FP16/BF16) training for faster GPU throughput
+device: cuda            # Compute hardware target device: 'cuda' (NVIDIA GPU) or 'cpu'
 
-dry_run: false
-max_steps: null
-ckpt_path: null
-use_amp: true
-mode: deterministic
-clips_per_ep: 2
-device: cuda
-
+# ── 5. Evaluation Settings ───────────────────────────────────────────────────
+mode: deterministic     # Evaluation evaluation mode: 'deterministic' (100% val coverage) or 'visualize'
+clips_per_ep: 2         # Fixed number of deterministic clips sampled per validation episode during evaluation
