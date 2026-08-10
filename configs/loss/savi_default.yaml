@@ -2,18 +2,19 @@
 # Default Composite Loss Configuration
 # ==============================================================================
 # Overview:
-#   Instantiates src.losses.composite.CompositeLoss via Hydra with:
-#     1. ReconstructionMSELoss (weight = 1.0)
-#     2. MaskSegmentationLoss (weight = 1.0, match_mode = fixed)
+#   Instantiates CompositeLoss (src.losses.composite.CompositeLoss) via Hydra.
+#   Combines:
+#     1. ReconstructionMSELoss (src.losses.recon_loss.ReconstructionMSELoss)
+#     2. MaskSegmentationLoss (src.losses.mask_loss.MaskSegmentationLoss)
 # ==============================================================================
 
 _target_: src.losses.composite.CompositeLoss  # Target Python class to instantiate via hydra.utils.instantiate
 
 losses:
   recon:
-    _target_: src.losses.recon_loss.ReconstructionMSELoss # Sub-loss target class for image reconstruction
-    weight: 1.0                                             # Loss weighting coefficient multiplier for recon MSE
+    _target_: src.losses.recon_loss.ReconstructionMSELoss # Atomic loss term for image reconstruction MSE
+    weight: 1.0                                             # Loss weighting coefficient for reconstruction MSE
   mask:
-    _target_: src.losses.mask_loss.MaskSegmentationLoss    # Sub-loss target class for mask segmentation
-    weight: 1.0                                             # Loss weighting coefficient multiplier for mask loss
-    match_mode: fixed                                       # Slot-to-mask assignment mode: 'fixed' or 'hungarian'
+    _target_: src.losses.mask_loss.MaskSegmentationLoss    # Atomic loss term for object mask segmentation (BCE + Dice)
+    weight: 1.0                                             # Loss weighting coefficient for mask segmentation
+    match_mode: fixed                                       # Slot-to-ground-truth mask assignment mode ('fixed' or 'hungarian')

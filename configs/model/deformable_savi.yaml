@@ -2,30 +2,31 @@
 # Deformable SAVi Model Configuration
 # ==============================================================================
 # Overview:
-#   Configuration for Deformable SAVi, combining Video Slot Attention with
-#   multi-scale deformable attention for sparse spatial feature extraction.
+#   Configuration for Deformable SAVi (SAVi with 2D Multi-Scale Deformable
+#   Slot Attention). Replaces standard dense attention with sparse sampling
+#   locations across feature maps for improved spatial feature extraction.
 # ==============================================================================
 
-name: "deformable_savi"        # Unique model name identifier
-type: "deformable_savi"        # Registered key in src.models.factory model registry
+name: "deformable_savi"        # Model identifier string used in exp_name interpolation
+type: "deformable_savi"        # Registered decorator key in src.models.factory targeting StandardizedDeformableSAViWrapper
 
-# ── Architectural Dimensions ──────────────────────────────────────────────────
-resolution: [64, 64]          # Spatial image resolution [Height, Width] input to backbone
-n_sample_frames: 6            # Number of temporal video frames per clip (T)
-num_slots: 4                  # Number of latent object slot vectors (K)
-slot_dim: 64                  # Feature dimensionality of each latent slot vector (D)
+# ── Model Architecture Dimensions ─────────────────────────────────────────────
+resolution: [64, 64]          # Spatial resolution [Height, Width] of input image frames
+n_sample_frames: 6            # Number of temporal video frames per clip (T = 6)
+num_slots: 4                  # Total number of latent object slots (K = 4)
+slot_dim: 64                  # Vector dimensionality of each latent slot representation (D = 64)
 num_iterations: 3             # Number of iterative Slot Attention refinement steps per frame
 n_heads: 4                    # Number of multi-scale deformable attention heads
-n_points: 4                   # Number of deformable sampling points per head per scale
-in_channels: 3                # Number of input RGB image channels (3 for RGB)
+n_points: 4                   # Number of deformable sampling offset points per head per feature scale
+in_channels: 3                # Number of input image channels (3 for RGB)
 
-# ── Latent Loss Settings ──────────────────────────────────────────────────────
+# ── Latent Distribution Settings ─────────────────────────────────────────────
 loss_dict:
-  kld_method: "none"          # VAE KL-divergence method: 'none', 'analytic', or 'mc'
+  kld_method: "none"          # VAE KL divergence mode: 'none' (deterministic slots), 'analytic', or 'mc'
 
-# ── Default Sub-Loss Weights ──────────────────────────────────────────────────
+# ── Sub-Loss Weights (Fallback when loss module is not specified via Hydra) ───
 weight_dict:
-  match_mode: "fixed"         # Mask matching strategy: 'fixed' (direct index order) or 'hungarian'
-  recon: 1.0                  # Weight coefficient for image reconstruction MSE loss
-  mask: 1.0                   # Weight coefficient for mask segmentation loss (BCE + Dice)
-  sigreg: 0.1                 # Weight coefficient for SIGReg latent regularization loss
+  match_mode: "fixed"         # Mask-to-slot matching strategy: 'fixed' (direct index order) or 'hungarian'
+  recon: 1.0                  # Weight multiplier for image reconstruction MSE loss
+  mask: 1.0                   # Weight multiplier for mask segmentation loss (BCE + Dice)
+  sigreg: 0.1                 # Weight multiplier for SIGReg isotropic Gaussian regularization loss

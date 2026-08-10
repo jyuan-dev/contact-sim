@@ -1,44 +1,52 @@
 # ==============================================================================
-# Main Hydra Configuration File (contact-sim)
+# Main Hydra Experiment Configuration File (contact-sim)
 # ==============================================================================
 # Overview:
-#   This file defines global experiment parameters, training hyperparameters,
-#   device settings, and default composition groups (model, dataset, loss).
+#   This is the root configuration file loaded by Hydra for training and evaluation.
+#   It composes default settings from sub-directories (model/, dataset/, loss/)
+#   and defines global training, optimization, hardware, and evaluation parameters.
 #
-# Usage Examples:
-#   python scripts/train.py
-#   python scripts/train.py model=savi loss=savi_sigreg batch_size=64 lr=1e-4
-#   python scripts/train.py dry_run=true
+# Common Usage Examples:
+#   - Default training run (Deformable SAVi on PushT dataset):
+#       python scripts/train.py
+#   - Train standard SAVi model with SIGReg loss:
+#       python scripts/train.py model=savi loss=savi_sigreg
+#   - Train with custom batch size and learning rate:
+#       python scripts/train.py batch_size=64 lr=1e-4
+#   - Run 5-step dry-run sanity check:
+#       python scripts/train.py dry_run=true
+#   - Evaluate pre-trained checkpoint:
+#       python scripts/eval.py ckpt_path=scratch/checkpoints/deformable_savi_pusht/deformable_savi_best.pt
 # ==============================================================================
 
 # ── 1. Hydra Defaults Composition Group ──────────────────────────────────────
 defaults:
-  - model: deformable_savi     # Default model architecture: 'deformable_savi' or 'savi'
-  - dataset: pusht             # Default dataset configuration: 'pusht' or 'gridshapes'
-  - loss: savi_default         # Default composite loss: 'savi_default', 'savi_sigreg', or 'savi_contrastive'
-  - optional experiment: null  # Optional experiment override (e.g. 'savi_pusht')
-  - _self_                     # Allow keys in this file to override defaults
+  - model: deformable_savi     # Model config from configs/model/ ('deformable_savi' or 'savi')
+  - dataset: pusht             # Dataset config from configs/dataset/ ('pusht' or 'gridshapes')
+  - loss: savi_default         # Loss composition config from configs/loss/ ('savi_default', 'savi_sigreg', 'savi_contrastive')
+  - optional experiment: null  # Optional experiment override from configs/experiment/ (e.g. 'savi_pusht')
+  - _self_                     # Enables keys in this file to override values inherited from defaults
 
-# ── 2. Experiment Metadata & Randomness ──────────────────────────────────────
-exp_name: ${model.name}_${dataset.name} # Auto-generated experiment identifier used for log & checkpoint paths
-seed: 42                                 # Global random seed for PyTorch, NumPy, and Python for reproducible runs
+# ── 2. Experiment Identification & Reproducibility ───────────────────────────
+exp_name: ${model.name}_${dataset.name} # Dynamic string defining experiment directory name under scratch/checkpoints/
+seed: 42                                 # Global random seed set across PyTorch, CUDA, NumPy, and Python random
 
-# ── 3. Optimization Hyperparameters ─────────────────────────────────────────
-epochs: 8               # Total number of training epochs
-batch_size: 128         # Batch size per training iteration across worker GPUs
-num_workers: 8          # Number of PyTorch DataLoader multiprocessing worker sub-processes
-lr: 2e-4                # Base Adam/AdamW learning rate
-weight_decay: 1e-4      # L2 weight decay regularization coefficient
-grad_clip_norm: 1.0     # Maximum gradient norm for gradient clipping (prevents exploding gradients)
-scheduler: null         # Optional learning rate scheduler ('cosine', 'step', or null for constant LR)
+# ── 3. Optimization & Training Hyperparameters ──────────────────────────────
+epochs: 8               # Total number of full training passes through dataset
+batch_size: 128         # Mini-batch size per training step across all workers
+num_workers: 8          # Number of DataLoader background worker processes for parallel data fetching
+lr: 2e-4                # Initial learning rate for Adam/AdamW optimizer
+weight_decay: 1e-4      # L2 weight decay penalty coefficient for AdamW optimizer
+grad_clip_norm: 1.0     # Maximum allowed gradient norm (clips gradients to prevent exploding gradients)
+scheduler: null         # Optional LR scheduler: 'cosine' (warmup + cosine decay) or null (constant LR)
 
-# ── 4. Runtime & Debug Settings ──────────────────────────────────────────────
-dry_run: false          # Fast debugging flag: if true, runs only 5 train/val steps and stops early
-max_steps: null         # Maximum training steps per epoch (set integer to cap epoch length, or null for full epoch)
-ckpt_path: null         # Path to pre-trained checkpoint .pt file for resume or evaluation (null = train from scratch)
-use_amp: true           # Enable Automatic Mixed Precision (FP16/BF16) training for faster GPU throughput
-device: cuda            # Compute hardware target device: 'cuda' (NVIDIA GPU) or 'cpu'
+# ── 4. Execution, Hardware & Debugging Settings ──────────────────────────────
+dry_run: false          # Fast debug mode: if true, caps epoch at 5 batches and runs 1 epoch to verify pipeline
+max_steps: null         # Maximum training steps per epoch (set integer like 100 to shorten epoch, or null for full epoch)
+ckpt_path: null         # File path to .pt checkpoint to resume training or evaluate (null = train from scratch)
+use_amp: true           # Enable Automatic Mixed Precision (torch.cuda.amp) for FP16 accelerated execution on GPU
+device: cuda            # Execution compute hardware device: 'cuda' (NVIDIA GPU) or 'cpu'
 
-# ── 5. Evaluation Settings ───────────────────────────────────────────────────
-mode: deterministic     # Evaluation evaluation mode: 'deterministic' (100% val coverage) or 'visualize'
-clips_per_ep: 2         # Fixed number of deterministic clips sampled per validation episode during evaluation
+# ── 5. Evaluation & Benchmarking Settings ────────────────────────────────────
+mode: deterministic     # Evaluation mode in scripts/eval.py: 'deterministic' (100% val coverage) or 'visualize' (renders GIFs)
+clips_per_ep: 2         # Fixed number of deterministic clips sampled per validation episode in DeterministicEpisodeEvalDataset

@@ -2,14 +2,15 @@
 # PushT HDF5 Dataset Configuration
 # ==============================================================================
 # Overview:
-#   Configuration for PushT robotic manipulation expert dataset stored in HDF5.
-#   Provides 64x64 video frames and ground-truth segmentation masks (Agent, Block, Goal).
+#   Configuration for PushT robotic manipulation expert dataset stored in HDF5 format.
+#   Provides 64x64 video frames ('pixels') and object segmentation masks ('agent_masks',
+#   'block_masks', 'goal_masks'). Handled by PushTMaskHDF5Dataset in src.datasets.pusht.
 # ==============================================================================
 
-name: "pusht"                                                 # Unique dataset name identifier
-type: "pusht"                                                 # Registered dataset type in src.datasets.factory
-h5_path: "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5" # Absolute file path to PushT HDF5 dataset file
+name: "pusht"                                                 # Dataset identifier string used in exp_name interpolation
+type: "pusht"                                                 # Registered dataset type key targeting PushTMaskHDF5Dataset in src.datasets.factory
+h5_path: "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5" # Absolute path to PushT HDF5 dataset file
 resolution: [64, 64]                                          # Image spatial resolution [Height, Width]
-n_sample_frames: 6                                            # Number of consecutive temporal frames per clip (T)
-frame_offset: 1                                               # Frame sampling stride/step between consecutive clip frames
-train_frac: 0.8                                               # Fraction of episodes assigned to train split (remainder for val)
+n_sample_frames: 6                                            # Number of consecutive temporal frames per sampled clip (T = 6)
+frame_offset: 1                                               # Frame sampling stride/step between consecutive frames (1 = adjacent frames)
+train_frac: 0.8                                               # Fraction of episodes assigned to training split (0.8 = 80% train, 20% val)
