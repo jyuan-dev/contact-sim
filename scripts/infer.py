@@ -35,7 +35,6 @@ def run_quick_inference(ckpt_path: str, num_sequences: int = 5, out_gif: str = "
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
     ckpt = torch.load(ckpt_path, map_location=device)
-    cfg = ckpt.get('config', {})
 
     dataset_cfg = {
         'name': 'pusht',
@@ -46,16 +45,11 @@ def run_quick_inference(ckpt_path: str, num_sequences: int = 5, out_gif: str = "
         'frame_offset': 1,
         'train_frac': 0.8,
     }
-    if 'dataset' not in cfg:
-        cfg['dataset'] = dataset_cfg
-    if 'model' not in cfg:
-        cfg['model'] = {'name': 'deformable_savi', 'type': 'deformable_savi'}
-
-
     val_loader = build_dataloader({'dataset': dataset_cfg}, split='val', batch_size=1, num_workers=2, shuffle=False)
 
+    cfg = {'model': {'name': 'deformable_savi', 'type': 'deformable_savi'}}
     model = build_model(cfg).to(device)
-    state_dict = ckpt['model_state'] if 'model_state' in ckpt else ckpt
+    state_dict = ckpt.get('model_state', ckpt)
     model.load_state_dict(state_dict, strict=False)
     model.eval()
 

@@ -135,23 +135,8 @@ def main(cfg: DictConfig):
 
     model = build_model(cfg_dict).to(device)
     ckpt_data = torch.load(ckpt_path, map_location=device)
-    state = ckpt_data.get('model', ckpt_data.get('model_state', ckpt_data))
-    # Normalize checkpoint keys: strip 'module.' prefix (from DDP/DataParallel)
-    # and collapse double 'model.model.' wrapping into single 'model.' prefix.
-    norm_state = {}
-    for k, v in state.items():
-        while k.startswith('module.'):
-            k = k[len('module.'):]
-        while k.startswith('model.model.'):
-            k = k[len('model.'):]
-        norm_state[k] = v
-    missing, unexpected = model.load_state_dict(norm_state, strict=False)
-    if missing:
-        print(f"Warning: {len(missing)} missing keys when loading checkpoint "
-              f"(first 5: {missing[:5]})")
-    if unexpected:
-        print(f"Warning: {len(unexpected)} unexpected keys when loading checkpoint "
-              f"(first 5: {unexpected[:5]})")
+    state = ckpt_data.get('model_state', ckpt_data)
+    model.load_state_dict(state, strict=False)
 
     eval_mode = str(cfg.get('mode', 'deterministic')).lower()
     if eval_mode in ('deterministic', 'full', 'full_val'):
