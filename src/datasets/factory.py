@@ -52,20 +52,29 @@ def build_dataset(cfg, split: str = 'train'):
         frame_offset = merged_cfg.get('frame_offset', 1)
         seed = merged_cfg.get('seed', 42)
 
+        train_frac = merged_cfg.get('train_frac', 0.9)
+
         return PushTMaskHDF5Dataset(
             h5_path=h5_path,
             split=split,
             resolution=resolution,
             n_sample_frames=n_sample_frames,
             frame_offset=frame_offset,
+            train_frac=train_frac,
             seed=seed,
         )
 
     elif 'gridshapes' in ds_name or 'grid_shapes' in ds_name:
-        num_samples = merged_cfg.get('num_samples', 1000 if split == 'train' else 200)
+        # Support both canonical config keys (train_samples/val_samples/resolution)
+        # and legacy keys (num_samples/num_frames/img_size).
+        train_samples = merged_cfg.get('train_samples', 1000)
+        val_samples = merged_cfg.get('val_samples', 200)
+        num_samples = merged_cfg.get('num_samples', train_samples if split == 'train' else val_samples)
         num_frames = merged_cfg.get('num_frames', merged_cfg.get('n_sample_frames', 16))
         num_objects = merged_cfg.get('num_objects', 3)
-        img_size = merged_cfg.get('img_size', 64)
+        img_size = merged_cfg.get('img_size', merged_cfg.get('resolution', [64, 64]))
+        if isinstance(img_size, (list, tuple)):
+            img_size = img_size[0]
         seed = merged_cfg.get('seed', 42) if split == 'train' else merged_cfg.get('seed', 42) + 9999
 
         return GridShapesDataset(

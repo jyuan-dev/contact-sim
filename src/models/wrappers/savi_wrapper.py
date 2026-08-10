@@ -36,11 +36,13 @@ class StandardizedSAViWrapper(BaseModelWrapper):
         model: nn.Module,
         weight_dict: dict | None = None,
         loss_fn: nn.Module | None = None,
+        resolution: tuple = (64, 64),
     ) -> None:
         super().__init__()
         self.model = model
         self.loss_fn = loss_fn
         self._weight_dict = weight_dict or {"recon": 1.0, "mask": 1.0}
+        self.resolution = resolution
 
     # ------------------------------------------------------------------
     # build() — self-contained constructor from config
@@ -74,7 +76,7 @@ class StandardizedSAViWrapper(BaseModelWrapper):
 
         loss_fn = model_cfg.get("loss_fn")
 
-        return cls(base_model, weight_dict=weight_dict, loss_fn=loss_fn)
+        return cls(base_model, weight_dict=weight_dict, loss_fn=loss_fn, resolution=res)
 
     # ------------------------------------------------------------------
     # forward / compute_loss
@@ -91,14 +93,15 @@ class StandardizedSAViWrapper(BaseModelWrapper):
             x = {"img": x}
 
         img_tensor: Tensor = x["img"]
-        if img_tensor.shape[-2:] != (64, 64):
+        target_size = getattr(self, 'resolution', (64, 64))
+        if img_tensor.shape[-2:] != target_size:
             B, T, C, H, W = img_tensor.shape
             img_tensor = F.interpolate(
                 img_tensor.view(B * T, C, H, W),
-                size=(64, 64),
+                size=target_size,
                 mode="bilinear",
                 align_corners=False,
-            ).view(B, T, C, 64, 64)
+            ).view(B, T, C, target_size[0], target_size[1])
             x = dict(x, img=img_tensor)
 
         raw_out = self.model(x)

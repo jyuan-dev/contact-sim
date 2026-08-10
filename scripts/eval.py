@@ -110,8 +110,9 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
     print(f"  Slot 2 (Goal Target):        {res['slot2_goal_iou']:.2f}%")
     print("=" * 80 + "\n")
 
-    os.makedirs("scratch", exist_ok=True)
-    out_file = "scratch/eval_results.json"
+    out_dir = os.path.join(REPO_ROOT, "scratch")
+    os.makedirs(out_dir, exist_ok=True)
+    out_file = os.path.join(out_dir, "eval_results.json")
     with open(out_file, "w") as f:
         json.dump(res, f, indent=2)
     print(f"Saved evaluation metrics to: {out_file}")
@@ -136,8 +137,22 @@ def main(cfg: DictConfig):
     model = build_model(cfg_dict).to(device)
     ckpt_data = torch.load(ckpt_path, map_location=device)
     state = ckpt_data.get('model', ckpt_data.get('model_state', ckpt_data))
-    state = {k.replace('model.', '').replace('module.', ''): v for k, v in state.items()}
-    model.load_state_dict(state, strict=False)
+    # Normalize checkpoint keys: strip 'module.' prefix (from DDP/DataParallel)
+    # and collapse double 'model.model.' wrapping into single 'model.' prefix.
+    _norm_state = {}
+    for _k, _v in state.items():
+        while _k.startswith('module.'):
+            _k = _k[len('module.'):]
+        while _k.startswith('model.model.'):
+            _k = _k[len('model.'):]
+        _norm_state[_k] = _v
+    missing, unexpected = model.load_state_dict(_norm_state, strict=False)
+    if missing:
+        print(f"Warning: {len(missing)} missing keys when loading checkpoint "
+              f"(first 5: {missing[:5]})")
+    if unexpected:
+        print(f"Warning: {len(unexpected)} unexpected keys when loading checkpoint "
+              f"(first 5: {unexpected[:5]})")
 
     eval_mode = str(cfg.get('mode', 'deterministic')).lower()
     if eval_mode in ('deterministic', 'full', 'full_val'):

@@ -30,9 +30,12 @@ from src.utils.training_utils import get_device, set_seed
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _save_checkpoint(model, path: str, epoch: int) -> None:
-    """Save model state dict + epoch to ``path``."""
-    torch.save({"model_state": model.state_dict(), "epoch": epoch}, path)
+def _save_checkpoint(model, path: str, epoch: int, config: dict = None) -> None:
+    """Save model state dict + epoch + config to ``path``."""
+    save_dict: dict = {"model_state": model.state_dict(), "epoch": epoch}
+    if config is not None:
+        save_dict["config"] = config
+    torch.save(save_dict, path)
     print(f"Saved checkpoint: {path}")
 
 
@@ -40,7 +43,7 @@ def _save_checkpoint(model, path: str, epoch: int) -> None:
 def main(cfg: DictConfig) -> None:
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
-    device = get_device()
+    device = get_device(cfg.get("device", None))
     set_seed(int(cfg.get("seed", 42)))
 
     model_name = cfg.model.name
@@ -66,7 +69,10 @@ def main(cfg: DictConfig) -> None:
 
     # ── Build model ───────────────────────────────────────────────────────
     if cfg.get("ckpt_path"):
-        ckpt = torch.load(cfg.ckpt_path, map_location=device)
+        ckpt_path = cfg.ckpt_path
+        if not os.path.isabs(ckpt_path):
+            ckpt_path = os.path.join(REPO_ROOT, ckpt_path)
+        ckpt = torch.load(ckpt_path, map_location=device)
         if "config" in ckpt and isinstance(ckpt["config"], dict) and "model" in ckpt["config"]:
             cfg_dict["model"] = ckpt["config"]["model"]
             model_name = cfg_dict["model"].get("name", model_name)
@@ -97,10 +103,12 @@ def main(cfg: DictConfig) -> None:
         lr=train_cfg.lr,
         weight_decay=train_cfg.weight_decay,
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=train_cfg.use_amp)
+    scaler = torch.amp.GradScaler(device.type, enabled=train_cfg.use_amp)
     print(f"AMP: {'enabled (FP16)' if train_cfg.use_amp else 'disabled (FP32)'}")
 
     # ── Delegate to run_training ──────────────────────────────────────────
+    # Wrap save function to capture the resolved config dict for checkpoint metadata
+    _save_fn = lambda model, path, epoch: _save_checkpoint(model, path, epoch, config=cfg_dict)  # noqa: E731
     run_training(
         model=model,
         train_loader=train_loader,
@@ -110,7 +118,7 @@ def main(cfg: DictConfig) -> None:
         device=device,
         cfg=train_cfg,
         trainer=trainer,
-        save_checkpoint_fn=_save_checkpoint,
+        save_checkpoint_fn=_save_fn,
     )
 
     trainer.close()

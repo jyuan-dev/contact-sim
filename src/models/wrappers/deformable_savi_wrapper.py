@@ -53,4 +53,6 @@ class StandardizedDeformableSAViWrapper(StandardizedSAViWrapper):
         weight_dict.setdefault("mask", 1.0)
         weight_dict.setdefault("sigreg", 0.1)
 
-        return cls(base_model, weight_dict=weight_dict)
+        loss_fn = model_cfg.get("loss_fn")
+
+        return cls(base_model, weight_dict=weight_dict, loss_fn=loss_fn, resolution=res)
