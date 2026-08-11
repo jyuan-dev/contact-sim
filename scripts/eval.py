@@ -46,7 +46,16 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
 
     model.eval()
     mses, mious, mdices = [], [], []
-    cls_ious = {0: [], 1: [], 2: []}
+    cls_ious = {k: [] for k in range(3)}
+    cls_dices = {k: [] for k in range(3)}
+    
+    # Temporal & sequence tracking
+    frame_mses = {}        # t -> list of MSEs
+    frame_mious = {}       # t -> list of mIoUs
+    frame_mdices = {}      # t -> list of mDices
+    frame_swaps = {}       # t -> (swaps, total)
+    
+    per_sequence_records = []
     total_transitions = 0
     swap_transitions = 0
     swapped_sequences = 0
@@ -54,71 +63,115 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
     num_batches = len(val_loader)
     start_t = time.time()
 
+    slot_names = {0: "Agent / Robot", 1: "T-Block Object", 2: "Goal Target Area"}
+
     with torch.no_grad():
+        clip_count = 0
         for b_idx, batch in enumerate(val_loader):
             video = batch['img'].to(device)
             out = model(video)
 
             recon = out.get('recon_img', None)
+            B, T, C, H, W = video.shape
+            
+            # Per-frame MSE computation
             if recon is not None:
-                mse = torch.mean((recon - video) ** 2).item()
-                mses.append(mse)
+                mse_per_seq = torch.mean((recon - video) ** 2, dim=(2, 3, 4))  # [B, T]
+                batch_mse = mse_per_seq.mean().item()
+                mses.append(batch_mse)
+
+                for t in range(T):
+                    frame_mses.setdefault(t, []).extend(mse_per_seq[:, t].cpu().tolist())
 
             pred_masks = out.get('pred_masks', None)
             gt_masks = batch.get('gt_masks', None)
             if pred_masks is not None and gt_masks is not None:
                 gt_masks = gt_masks.to(device)
-                B, T, K_pred = pred_masks.shape[:3]
+                K_pred = pred_masks.shape[2]
                 min_k = min(K_pred, gt_masks.shape[2])
                 p_sub = pred_masks[:, :, :min_k]
                 g_sub = gt_masks[:, :, :min_k]
 
+                # Per-slot IoU and Dice
                 for k in range(min_k):
                     p_k = (p_sub[:, :, k] > 0.5).float()
                     g_k = (g_sub[:, :, k] > 0.5).float()
-                    inter = (p_k * g_k).sum(dim=(-2, -1))
-                    union = p_k.sum(dim=(-2, -1)) + g_k.sum(dim=(-2, -1)) - inter
-                    iou_k = (inter + 1e-6) / (union + 1e-6)
-                    cls_ious[k].append(iou_k.mean().item())
+                    inter_k = (p_k * g_k).sum(dim=(-2, -1))
+                    union_k = p_k.sum(dim=(-2, -1)) + g_k.sum(dim=(-2, -1)) - inter_k
+                    iou_k = (inter_k + 1e-6) / (union_k + 1e-6)
+                    dice_k = (2.0 * inter_k + 1e-6) / (p_k.sum(dim=(-2, -1)) + g_k.sum(dim=(-2, -1)) + 1e-6)
 
-                intersection = (p_sub * g_sub).sum(dim=(-2, -1))
+                    cls_ious[k].extend(iou_k.reshape(-1).cpu().tolist())
+                    cls_dices[k].extend(dice_k.reshape(-1).cpu().tolist())
+
+                intersection = (p_sub * g_sub).sum(dim=(-2, -1))  # [B, T, min_k]
                 union = (p_sub + g_sub).sum(dim=(-2, -1)) - intersection
-                iou = (intersection + 1e-6) / (union + 1e-6)
-                dice = (2.0 * intersection + 1e-6) / (p_sub.sum(dim=(-2, -1)) + g_sub.sum(dim=(-2, -1)) + 1e-6)
-                mious.append(iou.mean().item())
-                mdices.append(dice.mean().item())
+                iou_seq_frame = (intersection + 1e-6) / (union + 1e-6)  # [B, T, min_k]
+                miou_per_seq_frame = iou_seq_frame.mean(dim=-1)         # [B, T]
 
-                # ── Slot Swapping Analysis ──────────────────────────────────
-                # For each sequence b in batch: find best GT mask j for each slot k across frames
+                dice_seq_frame = (2.0 * intersection + 1e-6) / (p_sub.sum(dim=(-2, -1)) + g_sub.sum(dim=(-2, -1)) + 1e-6)
+                mdice_per_seq_frame = dice_seq_frame.mean(dim=-1)      # [B, T]
+
+                mious.extend(miou_per_seq_frame.mean(dim=-1).cpu().tolist())
+                mdices.extend(mdice_per_seq_frame.mean(dim=-1).cpu().tolist())
+
+                for t in range(T):
+                    frame_mious.setdefault(t, []).extend(miou_per_seq_frame[:, t].cpu().tolist())
+                    frame_mdices.setdefault(t, []).extend(mdice_per_seq_frame[:, t].cpu().tolist())
+
+                # ── Slot Swapping & Per-Sequence Analysis ────────────────────
                 p_bin = (p_sub > 0.5).float()
                 g_bin = (g_sub > 0.5).float()
 
                 for b in range(B):
+                    global_clip_idx = clip_count + b
+                    clip_info = eval_dataset.clips_info[global_clip_idx] if hasattr(eval_dataset, 'clips_info') else {}
+                    ep_idx = clip_info.get('ep_idx', global_clip_idx)
+                    start_frame = clip_info.get('start_frame', 0)
+
                     total_sequences += 1
                     seq_swapped = False
+                    seq_swap_count = 0
                     prev_assignments = None
 
                     for t in range(T):
-                        # Calculate pairwise IoU matrix between slots (min_k) and GT masks (min_k)
-                        p_bt = p_bin[b, t]  # [min_k, H, W]
-                        g_bt = g_bin[b, t]  # [min_k, H, W]
-                        inter_mat = (p_bt.unsqueeze(1) * g_bt.unsqueeze(0)).sum(dim=(-2, -1)) # [min_k, min_k]
+                        p_bt = p_bin[b, t]
+                        g_bt = g_bin[b, t]
+                        inter_mat = (p_bt.unsqueeze(1) * g_bt.unsqueeze(0)).sum(dim=(-2, -1))
                         union_mat = p_bt.unsqueeze(1).sum(dim=(-2, -1)) + g_bt.unsqueeze(0).sum(dim=(-2, -1)) - inter_mat
                         iou_mat = (inter_mat + 1e-6) / (union_mat + 1e-6)
 
-                        # Best GT assignment per slot
                         curr_assignments = torch.argmax(iou_mat, dim=1).tolist()
 
                         if prev_assignments is not None:
                             total_transitions += 1
+                            frame_swaps.setdefault(t, [0, 0])
+                            frame_swaps[t][1] += 1
+
                             if curr_assignments != prev_assignments:
                                 swap_transitions += 1
                                 seq_swapped = True
+                                seq_swap_count += 1
+                                frame_swaps[t][0] += 1
 
                         prev_assignments = curr_assignments
 
                     if seq_swapped:
                         swapped_sequences += 1
+
+                    per_sequence_records.append({
+                        "clip_idx": global_clip_idx,
+                        "episode_idx": ep_idx,
+                        "start_frame": start_frame,
+                        "mse": float(mse_per_seq[b].mean().item()) if recon is not None else float("nan"),
+                        "miou": float(miou_per_seq_frame[b].mean().item() * 100),
+                        "mdice": float(mdice_per_seq_frame[b].mean().item() * 100),
+                        "slot_ious": {k: float(iou_seq_frame[b, :, k].mean().item() * 100) for k in range(min_k)},
+                        "swapped": seq_swapped,
+                        "swap_count": seq_swap_count,
+                    })
+
+            clip_count += B
 
             if (b_idx + 1) % 20 == 0 or (b_idx + 1) == num_batches:
                 elapsed = time.time() - start_t
@@ -128,44 +181,108 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
     slot_swap_rate = (swap_transitions / total_transitions * 100.0) if total_transitions > 0 else 0.0
     seq_swap_rate = (swapped_sequences / total_sequences * 100.0) if total_sequences > 0 else 0.0
 
+    # Calculate percentiles & distribution statistics
+    def get_stats(arr):
+        if not arr:
+            return {}
+        arr = np.array(arr)
+        return {
+            "mean": float(np.mean(arr)),
+            "std": float(np.std(arr)),
+            "median": float(np.median(arr)),
+            "q25": float(np.percentile(arr, 25)),
+            "q75": float(np.percentile(arr, 75)),
+            "min": float(np.min(arr)),
+            "max": float(np.max(arr)),
+        }
+
+    # Per-slot detailed statistics
+    per_slot_stats = {}
+    for k in cls_ious:
+        iou_st = get_stats(cls_ious[k])
+        dice_st = get_stats(cls_dices[k])
+        name = slot_names.get(k, f"Slot {k}")
+        per_slot_stats[f"slot_{k}"] = {
+            "name": name,
+            "iou_mean_pct": iou_st.get("mean", 0) * 100,
+            "iou_std_pct": iou_st.get("std", 0) * 100,
+            "iou_median_pct": iou_st.get("median", 0) * 100,
+            "iou_q25_pct": iou_st.get("q25", 0) * 100,
+            "iou_q75_pct": iou_st.get("q75", 0) * 100,
+            "dice_mean_pct": dice_st.get("mean", 0) * 100,
+            "dice_std_pct": dice_st.get("std", 0) * 100,
+        }
+
+    # Per-frame detailed statistics
+    per_frame_stats = []
+    for t in sorted(frame_mious.keys()):
+        swaps, total_t = frame_swaps.get(t, [0, 0])
+        per_frame_stats.append({
+            "frame_idx": t + 1,
+            "mse_mean": float(np.mean(frame_mses[t])) if t in frame_mses else float("nan"),
+            "miou_mean_pct": float(np.mean(frame_mious[t])) * 100 if t in frame_mious else 0.0,
+            "mdice_mean_pct": float(np.mean(frame_mdices[t])) * 100 if t in frame_mdices else 0.0,
+            "frame_swap_rate_pct": float(swaps / total_t * 100.0) if total_t > 0 else 0.0,
+        })
+
     res = {
         'ckpt_path': ckpt_path,
+        'summary': {
+            'val_mse': get_stats(mses),
+            'miou': {k: v * 100 for k, v in get_stats(mious).items()},
+            'mdice': {k: v * 100 for k, v in get_stats(mdices).items()},
+            'slot_swapping_rate_pct': float(slot_swap_rate),
+            'sequence_swapping_rate_pct': float(seq_swap_rate),
+            'total_episodes_evaluated': len(per_sequence_records),
+        },
         'val_mse': float(np.mean(mses)) if mses else float('nan'),
         'miou': float(np.mean(mious)) * 100 if mious else 0.0,
         'mdice': float(np.mean(mdices)) * 100 if mdices else 0.0,
-        'slot0_agent_iou': float(np.mean(cls_ious[0])) * 100 if cls_ious[0] else 0.0,
-        'slot1_block_iou': float(np.mean(cls_ious[1])) * 100 if cls_ious[1] else 0.0,
-        'slot2_goal_iou': float(np.mean(cls_ious[2])) * 100 if cls_ious[2] else 0.0,
+        'slot0_agent_iou': per_slot_stats.get("slot_0", {}).get("iou_mean_pct", 0.0),
+        'slot1_block_iou': per_slot_stats.get("slot_1", {}).get("iou_mean_pct", 0.0),
+        'slot2_goal_iou': per_slot_stats.get("slot_2", {}).get("iou_mean_pct", 0.0),
         'slot_swapping_rate_pct': float(slot_swap_rate),
         'sequence_swapping_rate_pct': float(seq_swap_rate),
+        'per_slot': per_slot_stats,
+        'per_frame': per_frame_stats,
+        'per_sequence': per_sequence_records,
     }
 
     print("\n" + "=" * 80)
     print(f"Deterministic Episode Evaluation Summary for {ckpt_path}:")
     print(f"  Visited Validation Episodes: {len(eval_dataset._episode_indices)} (100% Coverage)")
     print(f"  Evaluated Total Clips:       {len(eval_dataset)}")
-    print(f"  Val Reconstruction MSE:      {res['val_mse']:.6f}")
-    print(f"  Overall Mask mIoU:           {res['miou']:.2f}%")
+    print(f"  Val Reconstruction MSE:      {res['val_mse']:.6f} (std: {res['summary']['val_mse']['std']:.6f})")
+    print(f"  Overall Mask mIoU:           {res['miou']:.2f}% (median: {res['summary']['miou']['median']:.2f}%)")
     print(f"  Overall Mask mDice:          {res['mdice']:.2f}%")
-    print(f"  Slot 0 (Agent IoU):          {res['slot0_agent_iou']:.2f}%")
-    print(f"  Slot 1 (T-Block IoU):        {res['slot1_block_iou']:.2f}%")
-    print(f"  Slot 2 (Goal Target):        {res['slot2_goal_iou']:.2f}%")
+    print(f"  Slot 0 (Agent IoU):          {res['slot0_agent_iou']:.2f}% (std: {res['per_slot']['slot_0']['iou_std_pct']:.2f}%)")
+    print(f"  Slot 1 (T-Block IoU):        {res['slot1_block_iou']:.2f}% (std: {res['per_slot']['slot_1']['iou_std_pct']:.2f}%)")
+    print(f"  Slot 2 (Goal Target):        {res['slot2_goal_iou']:.2f}% (std: {res['per_slot']['slot_2']['iou_std_pct']:.2f}%)")
     print(f"  Slot Swapping Transition Rate: {res['slot_swapping_rate_pct']:.2f}%")
     print(f"  Sequence Slot Swapping Rate:  {res['sequence_swapping_rate_pct']:.2f}%")
     print("=" * 80 + "\n")
 
-    # Save evaluation metrics in both the checkpoint directory and scratch root
+    # Save detailed evaluation metrics in both the checkpoint directory and scratch root
     ckpt_dir = os.path.dirname(os.path.abspath(ckpt_path))
-    exp_out_file = os.path.join(ckpt_dir, "eval_results.json")
+    exp_out_file = os.path.join(ckpt_dir, "eval_results_detailed.json")
     with open(exp_out_file, "w") as f:
         json.dump(res, f, indent=2)
-    print(f"Saved evaluation metrics to experiment dir: {exp_out_file}")
+    print(f"Saved detailed evaluation metrics to experiment dir: {exp_out_file}")
+
+    # Also save standard eval_results.json for backwards compatibility
+    exp_std_file = os.path.join(ckpt_dir, "eval_results.json")
+    summary_std = {k: v for k, v in res.items() if k not in ["per_sequence", "per_frame"]}
+    with open(exp_std_file, "w") as f:
+        json.dump(summary_std, f, indent=2)
 
     out_dir = os.path.join(REPO_ROOT, "scratch")
     os.makedirs(out_dir, exist_ok=True)
-    out_file = os.path.join(out_dir, "eval_results.json")
+    out_file = os.path.join(out_dir, "eval_results_detailed.json")
     with open(out_file, "w") as f:
         json.dump(res, f, indent=2)
+
+    with open(os.path.join(out_dir, "eval_results.json"), "w") as f:
+        json.dump(summary_std, f, indent=2)
 
     return res
 
