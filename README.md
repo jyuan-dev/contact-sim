@@ -42,6 +42,18 @@ python scripts/train.py
 python scripts/train.py model=savi loss=savi_sigreg
 ```
 
+### Unsupervised SAVi (Reconstruction Only, No Mask Supervision)
+```bash
+# Reconstruction-only (no ground-truth mask loss)
+python scripts/train.py loss=savi_unsupervised
+
+# Unsupervised + SIGReg anti-collapse regularizer
+python scripts/train.py loss=savi_unsupervised_sigreg
+
+# Standard SAVi unsupervised
+python scripts/train.py model=savi loss=savi_unsupervised
+```
+
 ### Custom Epochs and Learning Rate
 ```bash
 python scripts/train.py epochs=10 lr=1e-4 batch_size=64
@@ -75,7 +87,7 @@ contact-sim/
 ├── configs/                # Hydra YAML configuration files
 │   ├── config.yaml         # Main root Hydra experiment config
 │   ├── dataset/            # Dataset configs (pusht, gridshapes)
-│   ├── loss/               # Loss configs (savi_default, savi_sigreg, savi_contrastive)
+│   ├── loss/               # Loss configs (savi_default, savi_sigreg, savi_contrastive, savi_unsupervised, savi_unsupervised_sigreg)
 │   └── model/              # Model configs (deformable_savi, savi)
 ├── scripts/                # Execution entrypoints (train.py, eval.py)
 ├── src/                    # Modular source code
