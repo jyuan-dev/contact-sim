@@ -45,8 +45,29 @@ def run_quick_inference(ckpt_path: str, clip_idx: int = None, num_sequences: int
         base_seed=42
     )
 
-    model_type = 'deformable_savi' if 'deformable' in ckpt_path.lower() else 'savi'
-    cfg = {'model': {'name': model_type, 'type': model_type}}
+    # ── Auto-discover training config.yaml ────────────────────────────────────
+    ckpt_dir = os.path.dirname(ckpt_path)
+    config_candidates = [
+        os.path.join(ckpt_dir, "config.yaml"),
+        os.path.join(ckpt_dir, ".hydra", "config.yaml"),
+    ]
+    saved_cfg = None
+    for cand in config_candidates:
+        if os.path.exists(cand):
+            try:
+                from omegaconf import OmegaConf
+                saved_cfg = OmegaConf.load(cand)
+                print(f"[Auto-Config] Loaded training configuration from: {cand}")
+                break
+            except Exception as e:
+                print(f"[Auto-Config] Warning: failed to load {cand}: {e}")
+
+    if saved_cfg is not None:
+        cfg = OmegaConf.to_container(saved_cfg, resolve=True)
+    else:
+        model_type = 'deformable_savi' if 'deformable' in ckpt_path.lower() else 'savi'
+        cfg = {'model': {'name': model_type, 'type': model_type}}
+
     model = build_model(cfg).to(device)
     load_checkpoint_state(model, ckpt_path, device=device)
     model.eval()
