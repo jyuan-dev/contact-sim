@@ -68,48 +68,71 @@ class SIGRegLoss(nn.Module):
         with torch.amp.autocast(device_type="cuda", enabled=False):
             z = z.float()
 
-            # Normalise shape to  (T, Batch, D) for the Le-WM formula.
+            # Normalise shape to  (T, B, K, D) for per-slot SIGReg.
             # Canonical input from SAVi wrappers:  (B, T, K, D).
-            # The metric / ad-hoc callers may pass 2-D or 4-D tensors.
+            # The metric / ad-hoc callers may pass 2-D or 3-D tensors.
             if z.ndim == 2:
-                # [N, D] — treat as (T=N, B=1)
-                z = z.unsqueeze(1)                    # (T, 1, D)
+                # [N, D] — treat as (T=N, B=1, K=1)
+                z = z.unsqueeze(1).unsqueeze(-1)        # (T, 1, 1, D)
             elif z.ndim == 3:
-                # [B, N, D] — treat N as time
-                z = z.permute(1, 0, 2)                # (N, B, D)
+                # [B, N, D] — treat N as time, K=1
+                z = z.permute(1, 0, 2).unsqueeze(2)     # (N, B, 1, D)
             elif z.ndim == 4:
-                # [B, T, K, D] — pool slots into batch dim
-                B, T, K, D = z.shape
-                z = z.permute(1, 0, 2, 3).reshape(T, B * K, D)
+                # [B, T, K, D] — canonical
+                z = z.permute(1, 0, 2, 3)               # (T, B, K, D)
             else:
-                # Flatten everything except the last dim
-                z = z.reshape(-1, z.shape[-1]).unsqueeze(1)  # (N, 1, D)
+                # Flatten everything except last dim → (T=1, B=1, K=N, D)
+                z = z.reshape(-1, z.shape[-1]).unsqueeze(0).unsqueeze(0)
+                                                          # (1, 1, N, D)
 
             T = z.shape[0]
+            B = z.shape[1]
+            K = z.shape[2]
+            D = z.shape[3]
+
             if T <= 1:
                 return torch.tensor(0.0, device=z.device), 0.0
 
-            D = z.shape[-1]
+            # ── Per-slot SIGReg ───────────────────────────────────────────
+            # Reshape so each slot is an independent batch for projection:
+            #   (T, B, K, D) → (T, B*K, D) for the projection
+            # then restore K in the ECF computation so each slot's
+            # statistic is computed independently.
+            z_proj = z.reshape(T, B * K, D)             # pool B*K for projection
 
-            # ── Fresh random unit-norm projections (Le-WM §forward) ──────
             A = torch.randn(D, self.num_proj, device=z.device, dtype=z.dtype)
             A = A.div_(A.norm(p=2, dim=0, keepdim=True))
 
-            # ── Epps-Pulley ECF statistic ────────────────────────────────
-            # x_t:  (T, B*K, num_proj, knots)  ← unsqueeze + broadcast
-            x_t = (z @ A).unsqueeze(-1) * self._t   # (T, B*K, M, Kt)
+            proj = z_proj @ A                           # (T, B*K, M)
+            proj = proj.view(T, B, K, self.num_proj)    # (T, B, K, M)
 
-            # .mean(-3) = mean over T axis → per-(batch*slot) ECF estimate
+            # x_t:  (T, B, K, M, Kt)
+            x_t = proj.unsqueeze(-1) * self._t
+
+            # .mean(-4) = mean over B → per-timestep, per-slot ECF
+            #   (T, B, K, M, Kt) → (T, K, M, Kt)
             err = (
-                (x_t.cos().mean(-3) - self._phi).square()
-                + x_t.sin().mean(-3).square()
-            )  # (B*K, M, Kt)
+                (x_t.cos().mean(-4) - self._phi).square()
+                + x_t.sin().mean(-4).square()
+            )  # (T, K, M, Kt)
 
-            statistic = (err @ self._weights) * z.size(-2)  # (B*K, M) * (B*K)
-            raw_loss = statistic.mean()                      # scalar
+            # Integrate over knots, scale by batch size
+            #   (T, K, M, Kt) @ (Kt,) → (T, K, M)
+            statistic = (err @ self._weights) * B       # (T, K, M)
+
+            # Per-slot breakdown: mean over T and M for each slot
+            per_slot = statistic.mean(dim=(0, 2))        # (K,)
+
+            raw_loss = per_slot.mean()                   # scalar: mean over K
 
             if torch.isnan(raw_loss) or torch.isinf(raw_loss):
                 return torch.tensor(0.0, device=z.device), 0.0
 
             weighted = self.weight * raw_loss
-            return weighted, raw_loss.item()
+
+            # Build per-slot info dict for TensorBoard logging
+            info = {"sigreg_loss": raw_loss.item()}
+            for k in range(K):
+                info[f"sigreg_slot{k}"] = per_slot[k].item()
+
+            return weighted, info

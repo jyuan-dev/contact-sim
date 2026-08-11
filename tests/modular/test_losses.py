@@ -214,13 +214,19 @@ class TestLosses(unittest.TestCase):
         self.assertTrue(raw_val > 0)
 
     def test_sigreg_loss_shape(self):
-        """Test SIGRegLoss forward pass and output type."""
+        """Test SIGRegLoss forward pass and output type (now returns per-slot dict)."""
         loss_fn = SIGRegLoss(weight=1.0, num_proj=16, knots=17)
-        dummy_latents = torch.randn(2, 3, 4, 16)
-        weighted, raw_val = loss_fn(dummy_latents)
+        dummy_latents = torch.randn(2, 3, 4, 16)  # [B, T, K, D]
+        weighted, info = loss_fn(dummy_latents)
 
         self.assertTrue(torch.is_tensor(weighted))
         self.assertEqual(weighted.ndim, 0)
+        # info is now a dict with per-slot breakdown
+        self.assertIsInstance(info, dict)
+        self.assertIn("sigreg_loss", info)
+        self.assertIn("sigreg_slot0", info)
+        self.assertIn("sigreg_slot3", info)
+        self.assertGreater(info["sigreg_loss"], 0.0)
 
     def test_composite_loss_aggregation(self):
         """Test CompositeLoss aggregates sub-losses dynamically."""
