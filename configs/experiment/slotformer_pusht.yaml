@@ -1,0 +1,27 @@
+# ==============================================================================
+# SlotFormer Stage 2 PushT Experiment Configuration
+# ==============================================================================
+
+# @package _global_
+defaults:
+  - override /model: slotformer
+  - override /dataset: pusht
+
+exp_name: "slotformer_pusht"
+
+model:
+  stage1_ckpt_path: "scratch/checkpoints/savi_pusht/savi_best.pt"
+  stage1_model_type: "savi"
+  history_len: 2
+  rollout_len: 4
+  d_model: 128
+  num_layers: 4
+  num_heads: 8
+  ffn_dim: 512
+
+batch_size: 32
+lr: 0.0004
+weight_decay: 0.0
+epochs: 30
+val_every: 2
+seed: 42

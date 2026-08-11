@@ -1,13 +1,7 @@
 """
 SlotFormer Autoregressive Future Slot Rollout Module.
 
-Given an input video clip [B, T, C, H, W] and a condition length T_cond (e.g. 2 frames):
-1. Runs conditioned visual slot extraction on the first T_cond frames to extract slots z_1, ..., z_{T_cond}.
-2. Autoregressively rolls out future slots z_{T_cond+1}, ..., z_T using the SAVi predictor:
-     z_{t+1} = predictor(z_t)
-   without feeding future image frames into the image encoder.
-3. Decodes all slots (conditioned + rolled-out) through inner_savi.decode to produce predicted RGB frames
-   x_hat_1, ..., x_hat_T and predicted segmentation masks m_hat_1, ..., m_hat_T.
+Supports both Stage 1 SAVi predictor fallback and Stage 2 SlotFormer Transformer Rollouter.
 """
 
 from __future__ import annotations
@@ -15,6 +9,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from src.models.slotformer import get_inner_savi
 
 
 def predict_slot_rollout(
@@ -26,7 +22,8 @@ def predict_slot_rollout(
     Perform autoregressive future slot rollout.
 
     Args:
-        wrapper_model: StandardizedSAViWrapper or StandardizedDeformableSAViWrapper instance.
+        wrapper_model: StandardizedSAViWrapper, StandardizedDeformableSAViWrapper,
+                       or StandardizedSlotFormerWrapper instance.
         video: [B, T, C, H, W] video clip tensor.
         n_cond_frames: Number of initial context frames to condition on (e.g. 2).
 
@@ -39,26 +36,35 @@ def predict_slot_rollout(
             'is_rollout_mask': [T] boolean tensor (True for rollout frames t >= n_cond_frames)
     """
     model = getattr(wrapper_model, "model", wrapper_model)
-    inner_savi = getattr(model, "model", model)
+
+    # Check if Stage 2 SlotFormerModel is present
+    if hasattr(model, "rollouter") and hasattr(model, "stage1_model"):
+        stage1_wrapper = model.stage1_model
+        inner_savi = get_inner_savi(stage1_wrapper)
+        rollouter = model.rollouter
+    else:
+        inner_savi = get_inner_savi(wrapper_model)
+        rollouter = None
 
     device = video.device
     B, T, C, H, W = video.shape
     n_cond_frames = min(n_cond_frames, T)
+    rollout_len = T - n_cond_frames
 
     # 1. Conditioned encoding for frames 0 .. n_cond_frames - 1
     cond_video = video[:, :n_cond_frames]
-    all_slots = []
-    
-    # Handle slot initialization & RNN reset
-    inner_savi._reset_rnn()
+    cond_slots = []
+
+    if hasattr(inner_savi, "_reset_rnn"):
+        inner_savi._reset_rnn()
+
     init_latents = inner_savi.init_latents.repeat(B, 1, 1)  # [B, K, D]
     prev_slots = None
 
-    # Conditioned phase: encode images and update slots via slot attention
     for t in range(n_cond_frames):
-        img_t = cond_video[:, t]  # [B, C, H, W]
-        enc_out_t = inner_savi._get_encoder_out(img_t)  # [B, H*W, enc_channels]
-        
+        img_t = cond_video[:, t]
+        enc_out_t = inner_savi._get_encoder_out(img_t)
+
         if prev_slots is None:
             latents = init_latents
         else:
@@ -66,22 +72,32 @@ def predict_slot_rollout(
 
         kernel_dist = inner_savi.kernel_dist_layer(latents)
         kernels = inner_savi._sample_dist(kernel_dist)
-        
+
         post_slots = inner_savi.slot_attention(enc_out_t, kernels)
-        all_slots.append(post_slots)
+        cond_slots.append(post_slots)
         prev_slots = post_slots
 
+    cond_slots_tensor = torch.stack(cond_slots, dim=1)  # [B, n_cond_frames, K, D]
+
     # 2. Autoregressive Rollout phase: for frames n_cond_frames .. T - 1
-    # No image encoder! Future slots are predicted purely from previous slots via predictor.
-    for t in range(n_cond_frames, T):
-        rollout_latents = inner_savi.predictor(prev_slots)
-        all_slots.append(rollout_latents)
-        prev_slots = rollout_latents
+    if rollout_len > 0:
+        if rollouter is not None:
+            # Use Stage 2 Transformer Rollouter (SlotFormer)
+            rollout_slots_tensor = rollouter(cond_slots_tensor, pred_len=rollout_len)
+        else:
+            # Fallback to Stage 1 SAVi GRU predictor
+            rollout_slots = []
+            for t in range(n_cond_frames, T):
+                rollout_latents = inner_savi.predictor(prev_slots)
+                rollout_slots.append(rollout_latents)
+                prev_slots = rollout_latents
+            rollout_slots_tensor = torch.stack(rollout_slots, dim=1)
 
-    # Stack slots: [B, T, K, D]
-    slots_stacked = torch.stack(all_slots, dim=1)  # [B, T, K, D]
+        slots_stacked = torch.cat([cond_slots_tensor, rollout_slots_tensor], dim=1)
+    else:
+        slots_stacked = cond_slots_tensor
 
-    # 3. Decode slots back into RGB reconstructions & segmentation masks using inner_savi.decode
+    # 3. Decode all slots back into RGB reconstructions & segmentation masks
     slots_flat = slots_stacked.flatten(0, 1)  # [B*T, K, D]
     post_recon_img, _, post_masks, _ = inner_savi.decode(slots_flat)
 
