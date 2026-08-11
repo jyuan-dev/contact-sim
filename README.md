@@ -28,6 +28,29 @@ git submodule update --init --recursive
 
 ---
 
+## 📊 Experiment Tracking & Data Versioning (W&B & DVC)
+
+This repository is integrated with **Weights & Biases (W&B)** for experiment tracking and **Data Version Control (DVC)** for dataset and model artifact management:
+
+### 1. Weights & Biases (W&B)
+- **Default W&B Project**: [`pusht-contact-sim`](https://wandb.ai/jie-yuan/pusht-contact-sim)
+- **Enabled by Default**: W&B tracking is active by default in [`configs/config.yaml`](file:///home/jyuan/jyuan-ws/contact-sim/configs/config.yaml) (`use_wandb: true`).
+- Training runs automatically log real-time loss curves (`recon_loss`, `mask_bce`, `mask_dice`, `total_loss`) and validation metrics directly to W&B.
+- To run offline without W&B syncing:
+  ```bash
+  python scripts/train.py use_wandb=false
+  ```
+
+### 2. Data Version Control (DVC)
+- DVC is initialized (`.dvc/`) for managing heavy dataset files and experiment model checkpoints.
+- Track large datasets or checkpoint artifacts:
+  ```bash
+  dvc add /home/jyuan/.stable-wm/pusht_expert_train_64x64.h5
+  git add pusht_expert_train_64x64.h5.dvc .gitignore
+  ```
+
+---
+
 ## 🛠️ Usage & Training Entrypoints
 
 The codebase uses [Hydra](https://hydra.cc/) for configuration management.
