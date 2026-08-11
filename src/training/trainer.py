@@ -53,7 +53,7 @@ class BaseTrainer:
         save_dir: str,
         experiment_name: str = "exp",
         mode: str = 'a',
-        use_wandb: bool = False,
+        use_wandb: bool = True,
         wandb_project: str = "pusht-contact-sim",
         cfg_dict: dict = None,
     ):

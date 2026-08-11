@@ -49,7 +49,7 @@ def main(cfg: DictConfig) -> None:
     ckpt_dir = os.path.join(REPO_ROOT, "scratch", "checkpoints", exp_name)
 
     # ── Set up trainer (TensorBoard + WandB + file logging) ───────────────
-    use_wandb = bool(cfg.get("use_wandb", False) or cfg.get("wandb", False))
+    use_wandb = bool(cfg.get("use_wandb", True))
     wandb_project = str(cfg.get("wandb_project", "pusht-contact-sim"))
     trainer = BaseTrainer(
         save_dir=ckpt_dir,
