@@ -50,7 +50,7 @@ nosetests.xml
 coverage.xml
 *.cover
 *.log
-.hypothesis/
+$.hypothesis/
 .pytest_cache/
 cover/
 
@@ -136,6 +136,8 @@ cython_debug/
 
 # VS Code
 .vscode/
+.claude/
+CLAUDE.md
 
 # Datasets and checkpoints
 *.h5
@@ -147,15 +149,14 @@ cython_debug/
 *.tar.*
 *.log
 
-# Scratch and debug directory
-scratch/*
-!scratch/checkpoints/
-!scratch/logs/
-!*.dvc
+# Scratch, outputs, logs, and debug directories (completely ignored from Git)
+scratch/
 outputs/
 .hydra/
+wandb/
+
+# Allow DVC tracking pointer files
+!*.dvc
 
 # Third-party dependencies
 third_party/
-
-
