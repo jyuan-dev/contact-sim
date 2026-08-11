@@ -37,25 +37,50 @@ class TeeLogger:
 
 class BaseTrainer:
     """
-    Base Trainer class encapsulating TensorBoard logging, dedicated file logging,
+    Base Trainer class encapsulating TensorBoard logging, WandB logging, dedicated file logging,
     checkpoint management, and experiment workspace state.
 
     Args:
         save_dir (str): Directory where logs and checkpoints will be saved.
         experiment_name (str): Unique name of the experiment.
         mode (str): Log file opening mode for stdout redirection.
-            Candidate Options:
-                - 'a' (Append, Default): Appends stdout to an existing train.log file.
-                - 'w' (Overwrite): Truncates train.log at startup to start a fresh log.
+        use_wandb (bool): Whether to enable WandB experiment tracking.
+        wandb_project (str): WandB project name.
+        cfg_dict (dict): Configuration dictionary to log to WandB.
     """
-    def __init__(self, save_dir: str, experiment_name: str = "exp", mode: str = 'a'):
+    def __init__(
+        self,
+        save_dir: str,
+        experiment_name: str = "exp",
+        mode: str = 'a',
+        use_wandb: bool = False,
+        wandb_project: str = "pusht-contact-sim",
+        cfg_dict: dict = None,
+    ):
         self.save_dir = save_dir
         self.experiment_name = experiment_name
+        self.use_wandb = use_wandb
+        self.wandb_run = None
         os.makedirs(self.save_dir, exist_ok=True)
 
         tb_log_dir = os.path.join(self.save_dir, 'tb_logs')
         os.makedirs(tb_log_dir, exist_ok=True)
         self.writer = SummaryWriter(log_dir=tb_log_dir)
+
+        # Optional WandB initialization
+        if self.use_wandb:
+            try:
+                import wandb
+                self.wandb_run = wandb.init(
+                    project=wandb_project,
+                    name=experiment_name,
+                    config=cfg_dict,
+                    dir=save_dir,
+                )
+                print(f"[{self.experiment_name}] WandB initialized: {self.wandb_run.url}", flush=True)
+            except Exception as e:
+                print(f"[{self.experiment_name}] Warning: Failed to initialize WandB ({e}). Continuing with TensorBoard only.", flush=True)
+                self.use_wandb = False
 
         # Setup dedicated file logging in save_dir
         self.log_path = os.path.join(self.save_dir, 'train.log')
@@ -70,6 +95,12 @@ class BaseTrainer:
 
     def log_scalar(self, tag: str, scalar_value: float, global_step: int):
         self.writer.add_scalar(tag, scalar_value, global_step)
+        if self.use_wandb and self.wandb_run:
+            try:
+                import wandb
+                wandb.log({tag: scalar_value}, step=global_step)
+            except Exception:
+                pass
 
     def log_image(self, tag: str, img_tensor: torch.Tensor, global_step: int):
         self.writer.add_image(tag, img_tensor, global_step)
@@ -84,6 +115,12 @@ class BaseTrainer:
         print(f"\n💡 HINT: Training completed! Inspect the tail of the log file using:\n   tail -n 50 {self.log_path}\n", flush=True)
         if self.writer:
             self.writer.close()
+        if self.use_wandb and self.wandb_run:
+            try:
+                import wandb
+                wandb.finish()
+            except Exception:
+                pass
         if hasattr(self, 'tee') and self.tee:
             # Sync train.log into tb_logs/train.log
             try:

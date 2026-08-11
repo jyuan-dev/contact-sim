@@ -48,8 +48,16 @@ def main(cfg: DictConfig) -> None:
     exp_name = cfg.get("exp_name", f"{model_name}_{dataset_name}")
     ckpt_dir = os.path.join(REPO_ROOT, "scratch", "checkpoints", exp_name)
 
-    # ── Set up trainer (TensorBoard + file logging) ───────────────────────
-    trainer = BaseTrainer(save_dir=ckpt_dir, experiment_name=exp_name)
+    # ── Set up trainer (TensorBoard + WandB + file logging) ───────────────
+    use_wandb = bool(cfg.get("use_wandb", False) or cfg.get("wandb", False))
+    wandb_project = str(cfg.get("wandb_project", "pusht-contact-sim"))
+    trainer = BaseTrainer(
+        save_dir=ckpt_dir,
+        experiment_name=exp_name,
+        use_wandb=use_wandb,
+        wandb_project=wandb_project,
+        cfg_dict=cfg_dict,
+    )
 
     # Save human-readable config snapshot for experiment tracking
     os.makedirs(ckpt_dir, exist_ok=True)
