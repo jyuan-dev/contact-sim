@@ -148,7 +148,10 @@ cython_debug/
 *.log
 
 # Scratch and debug directory
-scratch/
+scratch/*
+!scratch/checkpoints/
+!scratch/logs/
+!*.dvc
 outputs/
 .hydra/
 
