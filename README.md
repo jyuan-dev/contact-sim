@@ -7,9 +7,18 @@ An object-centric video learning codebase supporting **Deformable SAVi** and **S
 ## 🚀 Quick Start & Environment Setup
 
 ### 1. Prerequisites & Environment
-Ensure you have PyTorch 2.x and CUDA installed in your environment:
+Ensure you have PyTorch 2.x and CUDA installed in your environment.
+
+This project uses the `contact-sim` conda environment located at `/home/jyuan/miniconda3/envs/contact-sim`.
+
 ```bash
+# Activate the conda environment
 conda activate contact-sim
+
+# If conda isn't initialized in your shell, use the full path:
+#   /home/jyuan/miniconda3/envs/contact-sim/bin/python scripts/train.py
+
+# Install the package in editable mode
 pip install -e .
 ```
 

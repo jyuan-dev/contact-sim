@@ -54,3 +54,4 @@ clips_per_ep: 2         # Fixed number of deterministic clips sampled per valida
 # ── 6. Experiment Tracking & Logging Settings ────────────────────────────────
 use_wandb: true         # Enable Weights & Biases experiment tracking by default
 wandb_project: pusht-contact-sim # Default WandB project name
+auto_dvc: true           # Automatically run `dvc add` on best checkpoint after training

@@ -117,6 +117,7 @@ def run_epoch(
     epoch: int,
     num_epochs: int,
     stop_training_flag: list,   # mutable flag: [False]; set to [True] to stop
+    save_checkpoint_fn=None,    # callable(model, path, epoch) for intermediate checkpoints
 ) -> tuple[float, int]:
     """
     Run a single training or validation epoch.
@@ -227,6 +228,37 @@ def run_epoch(
                     if lk != "total_loss":
                         trainer.log_scalar(f"{split}/{lk}", lv, global_step)
                 global_step += 1
+
+                # ── Slot collapse diagnostics (every 50 steps) ──────────
+                if global_step % 50 == 0:
+                    try:
+                        from src.metrics.eval_metrics import compute_collapse_diagnostics
+                        collapse_metrics = compute_collapse_diagnostics(out)
+                        for ck, cv in collapse_metrics.items():
+                            trainer.log_scalar(f"Collapse/{ck}", cv, global_step)
+                        # Print a one-line summary to console
+                        cm = collapse_metrics
+                        print(
+                            f"  [Collapse] usage_std={cm.get('slot_usage_std', 0):.4f} "
+                            f"min={cm.get('slot_usage_min', 0):.4f} "
+                            f"max={cm.get('slot_usage_max', 0):.4f} "
+                            f"entropy={cm.get('mask_entropy', 0):.4f} "
+                            f"latent_std={cm.get('latent_std', 0):.4f}"
+                        )
+                    except Exception:
+                        pass  # best-effort; never crash training
+
+                # ── Segmentation quality check — FG-ARI (every 200 steps) ──
+                if global_step % 200 == 0:
+                    try:
+                        gt_masks = batch.get("gt_masks") if isinstance(batch, dict) else None
+                        if gt_masks is not None and out.get("pred_masks") is not None:
+                            from src.metrics.eval_metrics import compute_fg_ari
+                            fg_ari = compute_fg_ari(out["pred_masks"], gt_masks)
+                            trainer.log_scalar("Collapse/fg_ari", fg_ari, global_step)
+                            print(f"  [Segmentation] fg_ari={fg_ari:.4f}")
+                    except Exception:
+                        pass  # best-effort; never crash training
 
                 if global_step % 50 == 0 or step == 0:
                     elapsed = time.time() - start_time

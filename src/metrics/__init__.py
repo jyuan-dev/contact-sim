@@ -9,6 +9,7 @@ from src.metrics.eval_metrics import (
     compute_fg_ari,
     compute_latent_std,
     compute_sigreg_stat,
+    compute_collapse_diagnostics,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "compute_fg_ari",
     "compute_latent_std",
     "compute_sigreg_stat",
+    "compute_collapse_diagnostics",
 ]

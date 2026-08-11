@@ -122,6 +122,20 @@ def main(cfg: DictConfig) -> None:
     trainer.close()
     print("Training finished successfully!")
 
+    # ── Auto DVC tracking ─────────────────────────────────────────────────
+    if cfg.get("auto_dvc", True):
+        best_path = os.path.join(ckpt_dir, f"{model_name}_best.pt")
+        if os.path.isfile(best_path):
+            import subprocess
+            result = subprocess.run(
+                ["dvc", "add", best_path],
+                cwd=REPO_ROOT, capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                print(f"DVC: Tracked {best_path}")
+            else:
+                print(f"DVC: Warning — `dvc add` failed for {best_path}: {result.stderr.strip()}")
+
 
 if __name__ == "__main__":
     main()

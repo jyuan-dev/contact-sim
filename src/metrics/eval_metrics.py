@@ -138,6 +138,92 @@ def compute_latent_std(post_slots: torch.Tensor) -> float:
     return float(std)
 
 
+def compute_collapse_diagnostics(out: dict) -> dict[str, float]:
+    """Slot collapse diagnostics — no ground truth required.
+
+    Extracts ``pred_masks`` (softmax-normalized, sum-to-1 per pixel) and
+    ``post_slots`` from the model output and returns scalars for live
+    monitoring during training.
+
+    Args:
+        out: ModelOutput with ``pred_masks`` [B,T,K,H,W] and optionally
+             ``post_slots`` [B,T,K,D].
+
+    Returns:
+        Dict of scalar metrics for TensorBoard / W&B.
+
+    Metric definitions & value ranges (K = number of slots, e.g. 4)
+    ─────────────────────────────────────────────────────────────────────
+    slot_usage_std   Range [0, ~0.5].  Std of per-slot argmax win rates.
+                     High (>0.1): slots win different amounts of pixels
+                       → one dominates (supervised) or one dead.
+                     Low (<0.01): slots win equal amounts (good if sharp,
+                       bad if uniform — check mask_entropy to distinguish).
+    mask_entropy     Range [0, ln(K)].  Mean per-pixel entropy of softmax.
+                     With K=4: 0.0 = one-hot (sharp), 1.39 = total collapse.
+                     < 0.05  → sharp/confident assignment (healthy).
+                     > 0.50  → uncertain/flat (collapse warning).
+                     > 1.00  → near-uniform — slots are interchangeable.
+    latent_std       Range [0, ∞).  Per-dim std of slot vectors [B,T,K,D].
+                     > 0.10  → slots have diverse latents (healthy).
+                     < 0.01  → latent collapse — all slots identical vectors.
+    slot_usage_min   Range [0, 1/K].  Least-winning slot's argmax fraction.
+                     < 0.01  → a slot wins almost nothing (dead or losing
+                               argmax ties — check slot_usage_std).
+    slot_usage_max   Range [1/K, 1].  Most-winning slot's argmax fraction.
+                     > 0.90  → one slot monopolizes the image (monopoly).
+    slot_usage_mean  Always 1/K (mathematical identity from softmax).  Ignore.
+    ─────────────────────────────────────────────────────────────────────
+
+    Quick interpretation (K=4):
+    ─────────────────────────────────────────────────────────────────────
+    Scenario               usage_std  mask_entropy  latent_std  meaning
+    ─────────────────────────────────────────────────────────────────────
+    Object binding          >0.1       <0.05         >0.1       healthy
+    Spatial partition       <0.01      <0.05         >0.1       healthy
+    Uniform collapse        <0.01      >0.50         varies     BAD
+    Dead / monopoly         >0.1       varies        varies     BAD
+    Latent collapse         varies     varies        <0.01      BAD
+    ─────────────────────────────────────────────────────────────────────
+    """
+    metrics: dict[str, float] = {}
+
+    pred_masks = out.get("pred_masks")
+    if pred_masks is not None and pred_masks.numel() > 0:
+        # pred_masks: [B, T, K, H, W]
+        if pred_masks.ndim == 6 and pred_masks.shape[3] == 1:
+            pred_masks = pred_masks.squeeze(3)
+
+        B, T, K = pred_masks.shape[:3]
+        # Per-slot fraction of pixels won (argmax-based).
+        # Raw softmax means are forced to 1/K by the sum-to-1 constraint
+        # and are not informative.  Argmax tells us which slot dominates
+        # each pixel — the real signal.
+        masks_flat = pred_masks.reshape(B * T, K, -1)          # [B*T, K, HW]
+        win = masks_flat.argmax(dim=1)                          # [B*T, HW]
+        slot_wins = torch.stack([(win == k).float().mean(dim=-1) for k in range(K)], dim=1)  # [B*T, K]
+
+        metrics["slot_usage_mean"] = float(slot_wins.mean())
+        metrics["slot_usage_std"] = float(slot_wins.mean(dim=0).std())
+        metrics["slot_usage_min"] = float(slot_wins.min())
+        metrics["slot_usage_max"] = float(slot_wins.max())
+
+        # Per-pixel entropy of softmax masks.
+        # High entropy → uncertain slot assignment (collapse signal).
+        # Low entropy → sharp/confident assignment (healthy).
+        # Uses natural log so max = ln(K); 0 = one-hot.
+        masks_flat = pred_masks.reshape(B * T, K, -1)          # [B*T, K, HW]
+        p = masks_flat.clamp(min=1e-8)                          # avoid log(0)
+        per_pixel_entropy = -(p * p.log()).sum(dim=1)           # [B*T, HW]
+        metrics["mask_entropy"] = float(per_pixel_entropy.mean())
+
+    post_slots = out.get("post_slots")
+    if post_slots is not None and post_slots.numel() > 0:
+        metrics["latent_std"] = compute_latent_std(post_slots)
+
+    return metrics
+
+
 def compute_sigreg_stat(post_slots: torch.Tensor, sketch_dim: int = 64) -> float:
     """
     Computes Epps-Pulley empirical characteristic function statistic matching standard
