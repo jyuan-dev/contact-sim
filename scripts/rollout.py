@@ -191,12 +191,18 @@ def run_rollout_evaluation(
     print(f"  Future Rollout Sequence Swap Rate:      {res['future_rollout_sequence_swapping_rate_pct']:.2f}%")
     print("=" * 80 + "\n")
 
+    # Save rollout metrics in both the checkpoint directory and scratch root
+    ckpt_dir = os.path.dirname(os.path.abspath(ckpt_path))
+    exp_out_file = os.path.join(ckpt_dir, "rollout_results.json")
+    with open(exp_out_file, "w") as f:
+        json.dump(res, f, indent=2)
+    print(f"Saved rollout evaluation metrics to experiment dir: {exp_out_file}")
+
     out_dir = os.path.join(REPO_ROOT, "scratch")
     os.makedirs(out_dir, exist_ok=True)
     out_file = os.path.join(out_dir, "rollout_results.json")
     with open(out_file, "w") as f:
         json.dump(res, f, indent=2)
-    print(f"Saved rollout evaluation metrics to: {out_file}")
 
     if vis_frames:
         save_frames_to_gif(vis_frames, out_gif, fps=5)

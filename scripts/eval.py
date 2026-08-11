@@ -154,12 +154,18 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
     print(f"  Sequence Slot Swapping Rate:  {res['sequence_swapping_rate_pct']:.2f}%")
     print("=" * 80 + "\n")
 
+    # Save evaluation metrics in both the checkpoint directory and scratch root
+    ckpt_dir = os.path.dirname(os.path.abspath(ckpt_path))
+    exp_out_file = os.path.join(ckpt_dir, "eval_results.json")
+    with open(exp_out_file, "w") as f:
+        json.dump(res, f, indent=2)
+    print(f"Saved evaluation metrics to experiment dir: {exp_out_file}")
+
     out_dir = os.path.join(REPO_ROOT, "scratch")
     os.makedirs(out_dir, exist_ok=True)
     out_file = os.path.join(out_dir, "eval_results.json")
     with open(out_file, "w") as f:
         json.dump(res, f, indent=2)
-    print(f"Saved evaluation metrics to: {out_file}")
 
     return res
 
