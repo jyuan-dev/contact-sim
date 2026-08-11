@@ -1,9 +1,20 @@
 """
-SIGReg (Sketched Isotropic Gaussian Regularization) Loss Module from LeWorldModel (Le-WM).
-Ref: Garrido et al., 2024 / LeCun et al. (https://le-wm.github.io/)
+SIGReg (Sketched Isotropic Gaussian Regularization) — aligned with Le-WM.
 
-Uses Cramér-Wold 1D random projections and Epps-Pulley empirical characteristic function testing
-against standard Gaussian N(0, I) to prevent latent representation collapse in self-supervised learning.
+Ref: Garrido, Balestriero et al., LeWorldModel (2024) / LeCun et al.
+     https://le-wm.github.io/
+
+Uses Cramér-Wold random 1-D projections and the Epps-Pulley empirical
+characteristic function test against N(0, I) to prevent latent collapse.
+
+Implementation follows the reference Le-WM code exactly:
+  - Random unit-norm projections resampled fresh every forward pass.
+  - ECF mean is taken over the *time* axis, so each (batch, slot) item
+    gets its own per-trajectory ECF estimate.
+  - Trapezoidal quadrature over [0, 3] with Gaussian window.
+  - No per-channel normalization — caller is responsible for ensuring
+    latents are approximately zero-mean unit-variance (e.g. via BatchNorm
+    or LayerNorm upstream).
 """
 
 import torch
@@ -11,72 +22,94 @@ import torch.nn as nn
 
 
 class SIGRegLoss(nn.Module):
-    """
-    SIGReg Loss Module.
+    """Sketched Isotropic Gaussian Regularizer.
+
+    Input ``z`` with shape ``(B, T, K, D)`` is rearranged to
+    ``(T, B*K, D)`` so that each slot-trajectory is an independent
+    "batch element" whose temporal distribution is tested for
+    Gaussianity — matching the Le-WM pattern where the ECF mean is
+    taken over the time axis.
     """
 
-    def __init__(self, weight: float = 1.0, sketch_dim: int = 64, num_points: int = 17, t_max: float = 5.0):
+    def __init__(
+        self,
+        weight: float = 1.0,
+        num_proj: int = 1024,
+        knots: int = 17,
+        t_max: float = 3.0,
+    ):
         super().__init__()
         self.weight = weight
-        self.sketch_dim = sketch_dim
-        self.num_points = num_points
-        self.t_max = t_max
-        self._initialized = False
+        self.num_proj = num_proj
 
-    def _lazy_init(self, D: int, device, dtype):
-        A = torch.randn(D, self.sketch_dim, device=device, dtype=dtype)
-        A = A / (A.norm(p=2, dim=0, keepdim=True) + 1e-6)
-        self.register_buffer('_A', A)
-
-        t = torch.linspace(-self.t_max, self.t_max, self.num_points, device=device, dtype=dtype)
-        self.register_buffer('_t', t)
-        exp_f = torch.exp(-0.5 * (t ** 2))
-        self.register_buffer('_exp_f', exp_f)
-
-        self._initialized = True
+        # ── Quadrature knots + trapezoidal weights with Gaussian window ──
+        t = torch.linspace(0, t_max, knots, dtype=torch.float32)
+        dt = t_max / (knots - 1)
+        w = torch.full((knots,), 2 * dt, dtype=torch.float32)
+        w[[0, -1]] = dt                              # trapezoidal endpoints
+        window = torch.exp(-0.5 * t.square())         # exp(-t²/2)
+        self.register_buffer("_t", t)
+        self.register_buffer("_phi", window)
+        self.register_buffer("_weights", w * window)
 
     def forward(self, out, batch=None):
+        # ── Extract latents ──────────────────────────────────────────────
         if isinstance(out, dict):
             z = out.get("post_slots", out.get("slots"))
-            if z is None:
-                device = out.get("recon_img", out.get("input_img")).device if out else "cpu"
-                return torch.tensor(0.0, device=device), 0.0
         else:
             z = out
 
         if z is None:
             return torch.tensor(0.0), 0.0
 
+        if z.ndim < 2:
+            return torch.tensor(0.0, device=z.device), 0.0
+
         with torch.amp.autocast(device_type="cuda", enabled=False):
             z = z.float()
-            if z.ndim > 2:
-                z = z.reshape(-1, z.shape[-1])
 
-            N, D = z.shape
-            if N <= 1:
-                raw_loss = torch.tensor(0.0, device=z.device, dtype=torch.float32)
-                return self.weight * raw_loss, 0.0
+            # Normalise shape to  (T, Batch, D) for the Le-WM formula.
+            # Canonical input from SAVi wrappers:  (B, T, K, D).
+            # The metric / ad-hoc callers may pass 2-D or 4-D tensors.
+            if z.ndim == 2:
+                # [N, D] — treat as (T=N, B=1)
+                z = z.unsqueeze(1)                    # (T, 1, D)
+            elif z.ndim == 3:
+                # [B, N, D] — treat N as time
+                z = z.permute(1, 0, 2)                # (N, B, D)
+            elif z.ndim == 4:
+                # [B, T, K, D] — pool slots into batch dim
+                B, T, K, D = z.shape
+                z = z.permute(1, 0, 2, 3).reshape(T, B * K, D)
+            else:
+                # Flatten everything except the last dim
+                z = z.reshape(-1, z.shape[-1]).unsqueeze(1)  # (N, 1, D)
 
-            if not self._initialized or self._A.shape[0] != D or self._A.device != z.device:
-                self._lazy_init(D, z.device, torch.float32)
+            T = z.shape[0]
+            if T <= 1:
+                return torch.tensor(0.0, device=z.device), 0.0
 
-            mean = z.mean(dim=0, keepdim=True)
-            var = torch.var(z, dim=0, unbiased=False, keepdim=True)
-            std = torch.sqrt(var + 1e-5)
-            z_norm = (z - mean) / std
+            D = z.shape[-1]
 
-            proj = z_norm @ self._A
+            # ── Fresh random unit-norm projections (Le-WM §forward) ──────
+            A = torch.randn(D, self.num_proj, device=z.device, dtype=z.dtype)
+            A = A.div_(A.norm(p=2, dim=0, keepdim=True))
 
-            args = proj.unsqueeze(2) * self._t.view(1, 1, -1)
-            ecf_real = torch.cos(args).mean(dim=0)
-            ecf_imag = torch.sin(args).mean(dim=0)
+            # ── Epps-Pulley ECF statistic ────────────────────────────────
+            # x_t:  (T, B*K, num_proj, knots)  ← unsqueeze + broadcast
+            x_t = (z @ A).unsqueeze(-1) * self._t   # (T, B*K, M, Kt)
 
-            diff_sq = (ecf_real - self._exp_f.unsqueeze(0)) ** 2 + (ecf_imag) ** 2
-            err = diff_sq * self._exp_f.unsqueeze(0)
+            # .mean(-3) = mean over T axis → per-(batch*slot) ECF estimate
+            err = (
+                (x_t.cos().mean(-3) - self._phi).square()
+                + x_t.sin().mean(-3).square()
+            )  # (B*K, M, Kt)
 
-            raw_loss = torch.trapz(err, self._t, dim=1).mean() * N
+            statistic = (err @ self._weights) * z.size(-2)  # (B*K, M) * (B*K)
+            raw_loss = statistic.mean()                      # scalar
+
             if torch.isnan(raw_loss) or torch.isinf(raw_loss):
-                raw_loss = torch.tensor(0.0, device=z.device, dtype=torch.float32)
+                return torch.tensor(0.0, device=z.device), 0.0
 
-            weighted_loss = self.weight * raw_loss
-            return weighted_loss, raw_loss.item()
+            weighted = self.weight * raw_loss
+            return weighted, raw_loss.item()

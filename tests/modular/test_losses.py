@@ -215,7 +215,7 @@ class TestLosses(unittest.TestCase):
 
     def test_sigreg_loss_shape(self):
         """Test SIGRegLoss forward pass and output type."""
-        loss_fn = SIGRegLoss(weight=1.0, sketch_dim=16, num_points=10, t_max=3.0)
+        loss_fn = SIGRegLoss(weight=1.0, num_proj=16, knots=17)
         dummy_latents = torch.randn(2, 3, 4, 16)
         weighted, raw_val = loss_fn(dummy_latents)
 
