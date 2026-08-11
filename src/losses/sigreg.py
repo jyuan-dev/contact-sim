@@ -44,31 +44,39 @@ class SIGRegLoss(nn.Module):
         else:
             z = out
 
-        if z.ndim > 2:
-            z = z.reshape(-1, z.shape[-1])
+        if z is None:
+            return torch.tensor(0.0), 0.0
 
-        N, D = z.shape
-        if N <= 1:
-            raw_loss = torch.tensor(0.0, device=z.device, dtype=z.dtype)
-            return self.weight * raw_loss, 0.0
+        with torch.amp.autocast(device_type="cuda", enabled=False):
+            z = z.float()
+            if z.ndim > 2:
+                z = z.reshape(-1, z.shape[-1])
 
-        if not self._initialized or self._A.shape[0] != D:
-            self._lazy_init(D, z.device, z.dtype)
+            N, D = z.shape
+            if N <= 1:
+                raw_loss = torch.tensor(0.0, device=z.device, dtype=torch.float32)
+                return self.weight * raw_loss, 0.0
 
-        mean = z.mean(dim=0, keepdim=True)
-        var = torch.var(z, dim=0, unbiased=False, keepdim=True)
-        std = torch.sqrt(var + 1e-5)
-        z_norm = (z - mean) / std
+            if not self._initialized or self._A.shape[0] != D or self._A.device != z.device:
+                self._lazy_init(D, z.device, torch.float32)
 
-        proj = z_norm @ self._A
+            mean = z.mean(dim=0, keepdim=True)
+            var = torch.var(z, dim=0, unbiased=False, keepdim=True)
+            std = torch.sqrt(var + 1e-5)
+            z_norm = (z - mean) / std
 
-        args = proj.unsqueeze(2) * self._t.view(1, 1, -1)
-        ecf_real = torch.cos(args).mean(dim=0)
-        ecf_imag = torch.sin(args).mean(dim=0)
+            proj = z_norm @ self._A
 
-        diff_sq = (ecf_real - self._exp_f.unsqueeze(0)) ** 2 + (ecf_imag) ** 2
-        err = diff_sq * self._exp_f.unsqueeze(0)
+            args = proj.unsqueeze(2) * self._t.view(1, 1, -1)
+            ecf_real = torch.cos(args).mean(dim=0)
+            ecf_imag = torch.sin(args).mean(dim=0)
 
-        raw_loss = torch.trapz(err, self._t, dim=1).mean() * N
-        weighted_loss = self.weight * raw_loss
-        return weighted_loss, raw_loss.item()
+            diff_sq = (ecf_real - self._exp_f.unsqueeze(0)) ** 2 + (ecf_imag) ** 2
+            err = diff_sq * self._exp_f.unsqueeze(0)
+
+            raw_loss = torch.trapz(err, self._t, dim=1).mean() * N
+            if torch.isnan(raw_loss) or torch.isinf(raw_loss):
+                raw_loss = torch.tensor(0.0, device=z.device, dtype=torch.float32)
+
+            weighted_loss = self.weight * raw_loss
+            return weighted_loss, raw_loss.item()

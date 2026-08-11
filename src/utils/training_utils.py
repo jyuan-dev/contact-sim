@@ -49,6 +49,7 @@ def load_checkpoint_state(model: torch.nn.Module, ckpt_path: str,
     state = ckpt.get("model_state", ckpt)
 
     missing, unexpected = model.load_state_dict(state, strict=False)
+    unexpected = [k for k in unexpected if not k.startswith("loss_fn.")]
 
     if missing:
         raise ValueError(

@@ -47,6 +47,10 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
     model.eval()
     mses, mious, mdices = [], [], []
     cls_ious = {0: [], 1: [], 2: []}
+    total_transitions = 0
+    swap_transitions = 0
+    swapped_sequences = 0
+    total_sequences = 0
     num_batches = len(val_loader)
     start_t = time.time()
 
@@ -64,7 +68,8 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
             gt_masks = batch.get('gt_masks', None)
             if pred_masks is not None and gt_masks is not None:
                 gt_masks = gt_masks.to(device)
-                min_k = min(pred_masks.shape[2], gt_masks.shape[2])
+                B, T, K_pred = pred_masks.shape[:3]
+                min_k = min(K_pred, gt_masks.shape[2])
                 p_sub = pred_masks[:, :, :min_k]
                 g_sub = gt_masks[:, :, :min_k]
 
@@ -83,10 +88,45 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
                 mious.append(iou.mean().item())
                 mdices.append(dice.mean().item())
 
+                # ── Slot Swapping Analysis ──────────────────────────────────
+                # For each sequence b in batch: find best GT mask j for each slot k across frames
+                p_bin = (p_sub > 0.5).float()
+                g_bin = (g_sub > 0.5).float()
+
+                for b in range(B):
+                    total_sequences += 1
+                    seq_swapped = False
+                    prev_assignments = None
+
+                    for t in range(T):
+                        # Calculate pairwise IoU matrix between slots (min_k) and GT masks (min_k)
+                        p_bt = p_bin[b, t]  # [min_k, H, W]
+                        g_bt = g_bin[b, t]  # [min_k, H, W]
+                        inter_mat = (p_bt.unsqueeze(1) * g_bt.unsqueeze(0)).sum(dim=(-2, -1)) # [min_k, min_k]
+                        union_mat = p_bt.unsqueeze(1).sum(dim=(-2, -1)) + g_bt.unsqueeze(0).sum(dim=(-2, -1)) - inter_mat
+                        iou_mat = (inter_mat + 1e-6) / (union_mat + 1e-6)
+
+                        # Best GT assignment per slot
+                        curr_assignments = torch.argmax(iou_mat, dim=1).tolist()
+
+                        if prev_assignments is not None:
+                            total_transitions += 1
+                            if curr_assignments != prev_assignments:
+                                swap_transitions += 1
+                                seq_swapped = True
+
+                        prev_assignments = curr_assignments
+
+                    if seq_swapped:
+                        swapped_sequences += 1
+
             if (b_idx + 1) % 20 == 0 or (b_idx + 1) == num_batches:
                 elapsed = time.time() - start_t
                 speed = (b_idx + 1) / elapsed
                 print(f"Evaluated [{b_idx+1}/{num_batches}] batches ({speed:.1f} batch/s) | Curr mIoU: {np.mean(mious)*100:.2f}%")
+
+    slot_swap_rate = (swap_transitions / total_transitions * 100.0) if total_transitions > 0 else 0.0
+    seq_swap_rate = (swapped_sequences / total_sequences * 100.0) if total_sequences > 0 else 0.0
 
     res = {
         'ckpt_path': ckpt_path,
@@ -96,6 +136,8 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
         'slot0_agent_iou': float(np.mean(cls_ious[0])) * 100 if cls_ious[0] else 0.0,
         'slot1_block_iou': float(np.mean(cls_ious[1])) * 100 if cls_ious[1] else 0.0,
         'slot2_goal_iou': float(np.mean(cls_ious[2])) * 100 if cls_ious[2] else 0.0,
+        'slot_swapping_rate_pct': float(slot_swap_rate),
+        'sequence_swapping_rate_pct': float(seq_swap_rate),
     }
 
     print("\n" + "=" * 80)
@@ -108,6 +150,8 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
     print(f"  Slot 0 (Agent IoU):          {res['slot0_agent_iou']:.2f}%")
     print(f"  Slot 1 (T-Block IoU):        {res['slot1_block_iou']:.2f}%")
     print(f"  Slot 2 (Goal Target):        {res['slot2_goal_iou']:.2f}%")
+    print(f"  Slot Swapping Transition Rate: {res['slot_swapping_rate_pct']:.2f}%")
+    print(f"  Sequence Slot Swapping Rate:  {res['sequence_swapping_rate_pct']:.2f}%")
     print("=" * 80 + "\n")
 
     out_dir = os.path.join(REPO_ROOT, "scratch")

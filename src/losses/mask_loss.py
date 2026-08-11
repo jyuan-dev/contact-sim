@@ -47,7 +47,7 @@ class MaskSegmentationLoss(nn.Module):
             if self.match_mode == "fixed":
                 num_matched = min(S_slots, C)
                 p_matched = pred_m[:, :num_matched].reshape(-1, H, W).float()
-                p_matched = p_matched.clamp(eps, 1.0 - eps)
+                p_matched = torch.nan_to_num(p_matched, nan=eps).clamp(eps, 1.0 - eps)
                 g_matched = (gt_m[:, :num_matched].to(p_matched.device).reshape(-1, H, W) > 0.5).float()
 
                 with torch.amp.autocast(device_type="cuda", enabled=False):
