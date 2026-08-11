@@ -60,13 +60,15 @@ def run_quick_inference(ckpt_path: str, clip_idx: int = None, num_sequences: int
                 print(f"[Auto-Config] Loaded training configuration from: {cand}")
                 break
             except Exception as e:
-                print(f"[Auto-Config] Warning: failed to load {cand}: {e}")
+                raise RuntimeError(f"Failed to load training config file from '{cand}': {e}")
 
-    if saved_cfg is not None:
-        cfg = OmegaConf.to_container(saved_cfg, resolve=True)
-    else:
-        model_type = 'deformable_savi' if 'deformable' in ckpt_path.lower() else 'savi'
-        cfg = {'model': {'name': model_type, 'type': model_type}}
+    if saved_cfg is None:
+        raise FileNotFoundError(
+            f"Training config file 'config.yaml' not found in checkpoint directory '{ckpt_dir}'. "
+            f"Expected config.yaml or .hydra/config.yaml alongside checkpoint '{ckpt_path}'."
+        )
+
+    cfg = OmegaConf.to_container(saved_cfg, resolve=True)
 
     model = build_model(cfg).to(device)
     load_checkpoint_state(model, ckpt_path, device=device)

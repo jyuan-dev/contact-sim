@@ -315,26 +315,21 @@ def main(cfg: DictConfig):
                 print(f"[Auto-Config] Loaded training configuration from: {cand}")
                 break
             except Exception as e:
-                print(f"[Auto-Config] Warning: failed to load {cand}: {e}")
+                raise RuntimeError(f"Failed to load training config file from '{cand}': {e}")
 
-    if saved_cfg is not None:
-        saved_dict = OmegaConf.to_container(saved_cfg, resolve=True)
-        # Preserve user CLI execution overrides (device, batch_size, etc.)
-        cli_keys = ['device', 'batch_size', 'ckpt_path', 'ckpt', 'seed', 'clips_per_ep', 'mode']
-        for k in cli_keys:
-            if k in cfg_dict:
-                saved_dict[k] = cfg_dict[k]
-        cfg_dict = saved_dict
-    else:
-        # Fallback state_dict key inspection
-        ckpt_state = torch.load(ckpt_path, map_location='cpu')
-        state_dict = ckpt_state.get('model_state', ckpt_state)
-        is_deformable = any('deform' in k for k in state_dict.keys()) or ('deformable' in ckpt_path.lower())
-        detected_model = 'deformable_savi' if is_deformable else 'savi'
-        if cfg_dict.get('model', {}).get('name') != detected_model:
-            print(f"[Auto-Config] Auto-detected model type '{detected_model}' from checkpoint weights.")
-            cfg_dict.setdefault('model', {})['name'] = detected_model
-            cfg_dict['model']['type'] = detected_model
+    if saved_cfg is None:
+        raise FileNotFoundError(
+            f"Training config file 'config.yaml' not found in checkpoint directory '{ckpt_dir}'. "
+            f"Expected config.yaml or .hydra/config.yaml alongside checkpoint '{ckpt_path}'."
+        )
+
+    saved_dict = OmegaConf.to_container(saved_cfg, resolve=True)
+    # Preserve user CLI execution overrides (device, batch_size, etc.)
+    cli_keys = ['device', 'batch_size', 'ckpt_path', 'ckpt', 'seed', 'clips_per_ep', 'mode']
+    for k in cli_keys:
+        if k in cfg_dict:
+            saved_dict[k] = cfg_dict[k]
+    cfg_dict = saved_dict
 
     model = build_model(cfg_dict).to(device)
     load_checkpoint_state(model, ckpt_path, device=device)
