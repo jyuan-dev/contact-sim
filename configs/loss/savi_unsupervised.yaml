@@ -1,0 +1,20 @@
+# ==============================================================================
+# Unsupervised Loss Configuration — Reconstruction Only (No Mask Supervision)
+# ==============================================================================
+# Overview:
+#   Instantiates CompositeLoss with only ReconstructionMSELoss.  No ground-truth
+#   mask segmentation loss — the model learns object binding purely from
+#   reconstruction.  Use with SIGReg or contrastive loss to prevent latent collapse.
+#
+# Usage:
+#   python scripts/train.py loss=savi_unsupervised                              # recon only
+#   python scripts/train.py loss=savi_unsupervised +losses.sigreg._target_=...  # recon + SIGReg
+# ==============================================================================
+
+defaults:
+  - savi_default       # inherit recon + mask
+  - _self_             # allow this file to override inherited values
+
+# Drop mask loss — unsupervised SAVi has no ground-truth masks
+losses:
+  mask: null           # null → CompositeLoss silently ignores it

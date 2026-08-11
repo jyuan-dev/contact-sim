@@ -1,0 +1,20 @@
+# ==============================================================================
+# Unsupervised + SIGReg Regularization Configuration
+# ==============================================================================
+# Overview:
+#   Inherits unsupervised recon-only loss from savi_unsupervised.yaml and
+#   appends SIGRegLoss (Sketched Isotropic Gaussian Regularization) to
+#   prevent latent collapse without any mask supervision.
+#
+# Usage:
+#   python scripts/train.py loss=savi_unsupervised_sigreg
+# ==============================================================================
+
+defaults:
+  - savi_unsupervised   # inherit recon-only (no mask)
+  - _self_
+
+losses:
+  sigreg:
+    _target_: src.losses.sigreg.SIGRegLoss   # Sketched Isotropic Gaussian Regularization
+    weight: 0.1                               # Anti-collapse weight (prevent latent collapse)
