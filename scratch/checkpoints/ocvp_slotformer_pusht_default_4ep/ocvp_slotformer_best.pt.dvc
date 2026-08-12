@@ -1,0 +1,5 @@
+outs:
+- md5: 410de6b4f605e8a42f03a8dad1130137
+  size: 8544626
+  hash: md5
+  path: ocvp_slotformer_best.pt

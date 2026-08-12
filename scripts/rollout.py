@@ -3,7 +3,7 @@
 SlotFormer Autoregressive Future Slot Rollout Evaluation & Visualization Script.
 
 Usage:
-  python scripts/rollout.py --ckpt_path scratch/checkpoints/deformable_savi_pusht/deformable_savi_best.pt
+  python scripts/rollout.py --ckpt_path scratch/checkpoints/slotformer_pusht/slotformer_best.pt --device cuda
 """
 
 import os
@@ -53,15 +53,74 @@ def run_rollout_evaluation(
         resolution=(64, 64),
         n_sample_frames=6,
         clips_per_episode=clips_per_ep,
-        base_seed=base_seed,
+        seed=base_seed,
     )
     val_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
-    # Determine model type from checkpoint config snapshot or filename
-    model_name = "deformable_savi" if "deformable" in ckpt_path.lower() else "savi"
-    cfg = {"model": {"name": model_name, "type": model_name}}
+    # Auto-discover training config snapshot if available
+    ckpt_dir = os.path.dirname(ckpt_path)
+    config_candidates = [
+        os.path.join(ckpt_dir, "config.yaml"),
+        os.path.join(ckpt_dir, ".hydra", "config.yaml"),
+    ]
+    saved_cfg = None
+    for cand in config_candidates:
+        if os.path.exists(cand):
+            try:
+                from omegaconf import OmegaConf
+                saved_cfg = OmegaConf.load(cand)
+                print(f"[Auto-Config] Loaded training configuration from: {cand}")
+                break
+            except Exception as e:
+                pass
+
+    if saved_cfg is not None:
+        cfg = OmegaConf.to_container(saved_cfg, resolve=True)
+        model_name = cfg.get("model", {}).get("name", "slotformer")
+    else:
+        # Determine model type from checkpoint config snapshot or filename
+        if "slotformer" in ckpt_path.lower():
+            model_name = "slotformer"
+            ckpt = torch.load(ckpt_path, map_location="cpu")
+            state_dict = ckpt.get("model_state", ckpt)
+            
+            d_model = 128
+            ffn_dim = 512
+            num_layers = 4
+            
+            for k, v in state_dict.items():
+                if "rollouter.in_proj.weight" in k:
+                    d_model = v.shape[0]
+                elif "rollouter.transformer_encoder.layers.0.linear1.weight" in k:
+                    ffn_dim = v.shape[0]
+                elif "rollouter.transformer_encoder.layers." in k:
+                    parts = k.split(".")
+                    for p in parts:
+                        if p.isdigit():
+                            num_layers = max(num_layers, int(p) + 1)
+                            
+            print(f"[SlotFormer Eval] Detected architecture: d_model={d_model}, num_layers={num_layers}, ffn_dim={ffn_dim}")
+            cfg = {
+                "model": {
+                    "name": "slotformer",
+                    "type": "slotformer",
+                    "d_model": d_model,
+                    "num_layers": num_layers,
+                    "num_heads": 8,
+                    "ffn_dim": ffn_dim,
+                    "stage1_ckpt_path": "scratch/checkpoints/savi_pusht/savi_best.pt",
+                }
+            }
+        elif "deformable" in ckpt_path.lower():
+            model_name = "deformable_savi"
+            cfg = {"model": {"name": model_name, "type": model_name}}
+        else:
+            model_name = "savi"
+            cfg = {"model": {"name": model_name, "type": model_name}}
+
     model = build_model(cfg).to(device)
     load_checkpoint_state(model, ckpt_path, device=device)
+    print(f"[Rollout Eval] Model weights loaded into '{model_name}'.")
     model.eval()
 
     cond_mses, rollout_mses = [], []
@@ -121,7 +180,6 @@ def run_rollout_evaluation(
                     seq_swapped = False
                     prev_assign = None
 
-                    # Analyze assignment changes specifically during future rollout steps
                     for t in range(n_cond_frames - 1, T):
                         p_bt = p_bin[b, t]
                         g_bt = g_bin[b, t]
@@ -205,7 +263,7 @@ def run_rollout_evaluation(
         json.dump(res, f, indent=2)
 
     if vis_frames:
-        save_frames_to_gif(vis_frames, out_gif, fps=5)
+        save_frames_to_gif(vis_frames, out_gif, fps=4)
         print(f"Saved Future Rollout visualization GIF to: {out_gif}")
 
     return res
@@ -215,13 +273,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SlotFormer Autoregressive Future Slot Rollout Evaluation")
     parser.add_argument("--ckpt_path", type=str, required=True, help="Path to checkpoint file")
     parser.add_argument("--n_cond_frames", type=int, default=2, help="Number of condition frames")
-    parser.add_argument("--out_gif", type=str, default="scratch/rollout_best_model.gif", help="Output GIF path")
+    parser.add_argument("--base_seed", type=int, default=42, help="Evaluation random seed")
+    parser.add_argument("--clips_per_ep", type=int, default=2, help="Clips per episode to sample")
+    parser.add_argument("--batch_size", type=int, default=32, help="Evaluation batch size")
+    parser.add_argument("--out_gif", type=str, default="scratch/rollout_slotformer_stage2.gif", help="Output GIF path")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
     run_rollout_evaluation(
         ckpt_path=args.ckpt_path,
         n_cond_frames=args.n_cond_frames,
+        base_seed=args.base_seed,
+        clips_per_ep=args.clips_per_ep,
+        batch_size=args.batch_size,
         out_gif=args.out_gif,
         device=args.device,
     )

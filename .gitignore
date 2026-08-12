@@ -27,8 +27,6 @@ share/python-wheels/
 MANIFEST
 
 # PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
 
@@ -78,26 +76,6 @@ target/
 profile_default/
 ipython_config.py
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if hopes is to let users install dependency in their own way,
-#   Pipfile.lock can be ignored.
-# - http://pipenv.kennethreitz.org/en/latest/user/using-pipenv/#pipenv-and-version-control
-#Pipfile.lock
-
-# poetry
-#   Similar to Pipfile.lock, poetry.lock can be ignored or included in version control.
-#poetry.lock
-
-# pdm
-#   Similar to Pipfile.lock, pdm.lock can be ignored or included in version control.
-#pdm.lock
-
 # virtualenv
 .env
 env/
@@ -131,7 +109,6 @@ dmypy.json
 cython_debug/
 
 # PyCharm
-#  JetBrains templates reference: https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
 .idea/
 
 # VS Code
@@ -149,8 +126,10 @@ CLAUDE.md
 *.tar.*
 *.log
 
-# Scratch, outputs, logs, and debug directories (completely ignored from Git)
-scratch/
+# Scratch, outputs, logs, and debug directories
+scratch/*
+!scratch/**/*.dvc
+!scratch/**/.gitignore
 outputs/
 .hydra/
 wandb/

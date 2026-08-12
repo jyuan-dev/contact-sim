@@ -48,7 +48,24 @@ def load_checkpoint_state(model: torch.nn.Module, ckpt_path: str,
     ckpt = torch.load(ckpt_path, map_location=device or "cpu")
     state = ckpt.get("model_state", ckpt)
 
-    missing, unexpected = model.load_state_dict(state, strict=False)
+    # Automatically adapt prefix mismatches (e.g., 'module.', 'model.' -> 'model.model.', etc.)
+    model_keys = set(model.state_dict().keys())
+    adapted_state = {}
+    for k, v in state.items():
+        if k in model_keys:
+            adapted_state[k] = v
+        elif f"model.{k}" in model_keys:
+            adapted_state[f"model.{k}"] = v
+        elif k.startswith("module.") and k[7:] in model_keys:
+            adapted_state[k[7:]] = v
+        elif k.startswith("model.") and k[6:] in model_keys:
+            adapted_state[k[6:]] = v
+        elif k.startswith("model.model.") and k[6:] in model_keys:
+            adapted_state[k[6:]] = v
+        else:
+            adapted_state[k] = v
+
+    missing, unexpected = model.load_state_dict(adapted_state, strict=False)
     unexpected = [k for k in unexpected if not k.startswith("loss_fn.")]
 
     if missing:
@@ -63,3 +80,4 @@ def load_checkpoint_state(model: torch.nn.Module, ckpt_path: str,
             f"First 5: {unexpected[:5]}\n"
             f"Checkpoint: {ckpt_path}"
         )
+

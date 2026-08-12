@@ -1,0 +1,5 @@
+outs:
+- md5: 4de44f924850b910f724e3554e9e7759
+  size: 7474138
+  hash: md5
+  path: slotformer_best.pt

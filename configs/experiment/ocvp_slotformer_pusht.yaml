@@ -1,16 +1,17 @@
 # ==============================================================================
-# SlotFormer Stage 2 PushT Experiment Configuration
+# OCVP Factorized SlotFormer Stage 2 PushT Experiment Configuration
 # ==============================================================================
 
-exp_name: "slotformer_pusht"
+exp_name: "ocvp_slotformer_pusht_default_4ep"
 
 dataset:
   load_masks: false
 
 model:
-  name: "slotformer"
-  type: "slotformer"
-  stage1_ckpt_path: "scratch/checkpoints/savi_pusht/savi_best.pt"
+  name: "ocvp_slotformer"
+  type: "ocvp_slotformer"
+  rollouter_type: "ocvp"
+  stage1_ckpt_path: "scratch/checkpoints/savi_pusht_default_4ep/savi_best.pt"
   stage1_model_type: "savi"
   history_len: 2
   rollout_len: 4

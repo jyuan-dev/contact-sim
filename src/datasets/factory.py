@@ -50,8 +50,9 @@ def build_dataset(cfg, split: str = 'train'):
         n_sample_frames = merged_cfg.get('n_sample_frames', merged_cfg.get('seq_len', 6))
         frame_offset = merged_cfg.get('frame_offset', 1)
         seed = merged_cfg.get('seed', 42)
-
         train_frac = merged_cfg.get('train_frac', 0.9)
+        load_masks = merged_cfg.get('load_masks', False)
+        preload_ram = merged_cfg.get('preload_ram', True)
 
         return PushTMaskHDF5Dataset(
             h5_path=h5_path,
@@ -61,11 +62,11 @@ def build_dataset(cfg, split: str = 'train'):
             frame_offset=frame_offset,
             train_frac=train_frac,
             seed=seed,
+            load_masks=load_masks,
+            preload_ram=preload_ram,
         )
 
     elif 'gridshapes' in ds_name or 'grid_shapes' in ds_name:
-        # Support both canonical config keys (train_samples/val_samples/resolution)
-        # and legacy keys (num_samples/num_frames/img_size).
         train_samples = merged_cfg.get('train_samples', 1000)
         val_samples = merged_cfg.get('val_samples', 200)
         num_samples = merged_cfg.get('num_samples', train_samples if split == 'train' else val_samples)
@@ -90,7 +91,7 @@ def build_dataset(cfg, split: str = 'train'):
 
 def build_dataloader(cfg, split: str = 'train', batch_size: int = None, num_workers: int = 4, shuffle: bool = None):
     """
-    Constructs a PyTorch DataLoader for the specified dataset split.
+    Constructs a PyTorch DataLoader for the specified dataset split with GPU pin_memory and prefetching optimizations.
     """
     dataset = build_dataset(cfg, split=split)
     
@@ -100,12 +101,17 @@ def build_dataloader(cfg, split: str = 'train', batch_size: int = None, num_work
     if shuffle is None:
         shuffle = (split == 'train')
 
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=torch.cuda.is_available(),
-        persistent_workers=(num_workers > 0),
-        drop_last=(split == 'train')
-    )
+    kwargs = {
+        "dataset": dataset,
+        "batch_size": batch_size,
+        "shuffle": shuffle,
+        "num_workers": num_workers,
+        "pin_memory": torch.cuda.is_available(),
+        "persistent_workers": (num_workers > 0),
+        "drop_last": (split == 'train'),
+    }
+
+    if num_workers > 0:
+        kwargs["prefetch_factor"] = 4
+
+    return DataLoader(**kwargs)

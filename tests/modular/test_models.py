@@ -312,6 +312,63 @@ class TestRunEpoch(unittest.TestCase):
         optimizer.step.assert_not_called()
 
 
+# ── OCVP Factorized SlotRollouter Tests ────────────────────────────────────────
+
+class TestOCVPSlotRollouter(unittest.TestCase):
+    def test_ocvp_rollouter_forward_shape(self):
+        """OCVPSlotRollouter should output correct shape [B, pred_len, K, D]."""
+        from src.models.slotformer import OCVPSlotRollouter
+        rollouter = OCVPSlotRollouter(
+            num_slots=4,
+            slot_size=64,
+            history_len=2,
+            d_model=32,
+            num_layers=2,
+            num_heads=4,
+            ffn_dim=128,
+        )
+        x = torch.randn(2, 2, 4, 64)
+        out = rollouter(x, pred_len=4)
+        self.assertEqual(out.shape, (2, 4, 4, 64))
+
+    def test_ocvp_rollouter_gradient_flow(self):
+        """Gradients must flow through Temporal and Interactive attention layers."""
+        from src.models.slotformer import OCVPSlotRollouter
+        rollouter = OCVPSlotRollouter(
+            num_slots=4,
+            slot_size=32,
+            history_len=2,
+            d_model=32,
+            num_layers=2,
+            num_heads=4,
+            ffn_dim=64,
+        )
+        x = torch.randn(2, 2, 4, 32, requires_grad=True)
+        out = rollouter(x, pred_len=2)
+        loss = out.sum()
+        loss.backward()
+        self.assertIsNotNone(x.grad)
+        self.assertFalse(torch.isnan(x.grad).any())
+
+    def test_build_ocvp_slotformer_wrapper(self):
+        """build_model should construct OCVP SlotFormer wrapper from config."""
+        from src.models.factory import build_model
+        cfg = {
+            "model": {
+                "name": "ocvp_slotformer",
+                "type": "ocvp_slotformer",
+                "rollouter_type": "ocvp",
+                "stage1_ckpt_path": None,
+                "d_model": 32,
+                "num_layers": 2,
+                "num_heads": 4,
+                "ffn_dim": 64,
+            }
+        }
+        wrapper = build_model(cfg)
+        self.assertEqual(wrapper.model.rollouter.__class__.__name__, "OCVPSlotRollouter")
+
+
 # ── TrainConfig Tests ─────────────────────────────────────────────────────────
 
 class TestTrainConfig(unittest.TestCase):
@@ -346,3 +403,4 @@ class TestTrainConfig(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

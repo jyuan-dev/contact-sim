@@ -14,3 +14,4 @@ resolution: [64, 64]                                          # Image spatial re
 n_sample_frames: 6                                            # Number of consecutive temporal frames per sampled clip (T = 6)
 frame_offset: 1                                               # Frame sampling stride/step between consecutive frames (1 = adjacent frames)
 train_frac: 0.8                                               # Fraction of episodes assigned to training split (0.8 = 80% train, 20% val)
+load_masks: true                                              # Load ground-truth masks from HDF5 by default

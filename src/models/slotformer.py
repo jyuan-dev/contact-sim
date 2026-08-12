@@ -125,10 +125,173 @@ class SlotRollouter(nn.Module):
         return torch.stack(pred_out, dim=1)  # [B, pred_len, N, slot_size]
 
 
+# ── OCVP Factorized SlotRollouter Variant ──────────────────────────────────────
+
+class TemporalSelfAttention(nn.Module):
+    """
+    Temporal Self-Attention modeling motion dynamics over sequence length T
+    for each slot token independently.
+    Input: [B, T, K, D] -> Reshape [B * K, T, D] -> MultiHeadAttention -> Reshape [B, T, K, D].
+    """
+    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, dropout=dropout, batch_first=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, K, D = x.shape
+        x_flat = x.permute(0, 2, 1, 3).reshape(B * K, T, D)
+        attn_out, _ = self.attn(x_flat, x_flat, x_flat)
+        return attn_out.reshape(B, K, T, D).permute(0, 2, 1, 3)
+
+
+class InteractiveSelfAttention(nn.Module):
+    """
+    Interactive Self-Attention modeling inter-object relationships across K slots
+    at each timestep independently.
+    Input: [B, T, K, D] -> Reshape [B * T, K, D] -> MultiHeadAttention -> Reshape [B, T, K, D].
+    """
+    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, dropout=dropout, batch_first=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, K, D = x.shape
+        x_flat = x.reshape(B * T, K, D)
+        attn_out, _ = self.attn(x_flat, x_flat, x_flat)
+        return attn_out.reshape(B, T, K, D)
+
+
+class SlotTransitionMLP(nn.Module):
+    """
+    Per-slot latent state transition MLP.
+    Updates each slot token's feature representation after temporal motion
+    and inter-slot interaction reasoning.
+    """
+    def __init__(self, d_model: int, ffn_dim: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, ffn_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(ffn_dim, d_model),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.mlp(x)
+
+
+class OCVPRollouterLayer(nn.Module):
+    """
+    OCVP Transformer Layer combining:
+      1. LayerNorm -> TemporalSelfAttention -> Residual
+      2. LayerNorm -> InteractiveSelfAttention -> Residual
+      3. LayerNorm -> SlotTransitionMLP -> Residual
+    """
+    def __init__(self, d_model: int, num_heads: int, ffn_dim: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.norm1 = nn.LayerNorm(d_model)
+        self.temporal_attn = TemporalSelfAttention(d_model=d_model, num_heads=num_heads, dropout=dropout)
+
+        self.norm2 = nn.LayerNorm(d_model)
+        self.interactive_attn = InteractiveSelfAttention(d_model=d_model, num_heads=num_heads, dropout=dropout)
+
+        self.norm3 = nn.LayerNorm(d_model)
+        self.slot_transition = SlotTransitionMLP(d_model=d_model, ffn_dim=ffn_dim, dropout=dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 1. Temporal Motion Self-Attention (over T)
+        x = x + self.temporal_attn(self.norm1(x))
+        # 2. Inter-Slot Interactive Self-Attention (over K)
+        x = x + self.interactive_attn(self.norm2(x))
+        # 3. Slot Latent State Transition MLP
+        x = x + self.slot_transition(self.norm3(x))
+        return x
+
+
+class OCVPSlotRollouter(nn.Module):
+    """
+    OCVP Factorized Autoregressive Rollouter for Slot Latents.
+
+    Takes past slot tokens [B, history_len, num_slots, slot_size],
+    applies spatial-temporal position encodings, and iterates through
+    N stacked OCVPRollouterLayers (Temporal Attention -> Interactive Attention -> Slot Transition MLP)
+    to autoregressively predict future slot tokens for pred_len steps.
+    """
+
+    def __init__(
+        self,
+        num_slots: int = 4,
+        slot_size: int = 64,
+        history_len: int = 2,
+        t_pe: str = "sin",
+        slots_pe: str = "",
+        d_model: int = 128,
+        num_layers: int = 4,
+        num_heads: int = 8,
+        ffn_dim: int = 512,
+    ) -> None:
+        super().__init__()
+        self.num_slots = num_slots
+        self.slot_size = slot_size
+        self.history_len = history_len
+
+        self.in_proj = nn.Linear(slot_size, d_model)
+
+        self.layers = nn.ModuleList([
+            OCVPRollouterLayer(d_model=d_model, num_heads=num_heads, ffn_dim=ffn_dim)
+            for _ in range(num_layers)
+        ])
+
+        self.enc_t_pe = build_pos_enc(t_pe, history_len, d_model)
+        self.enc_slots_pe = build_pos_enc(slots_pe, num_slots, d_model)
+        self.out_proj = nn.Linear(d_model, slot_size)
+
+    def forward(self, x: torch.Tensor, pred_len: int) -> torch.Tensor:
+        """
+        Args:
+            x: [B, history_len, num_slots, slot_size]
+            pred_len: Number of future timesteps to rollout
+
+        Returns:
+            [B, pred_len, num_slots, slot_size]
+        """
+        assert x.shape[1] == self.history_len, f"Expected history_len={self.history_len}, got {x.shape[1]}"
+        B = x.shape[0]
+
+        curr_x = x  # [B, history_len, num_slots, slot_size]
+        pred_out = []
+
+        for _ in range(pred_len):
+            proj_x = self.in_proj(curr_x)  # [B, T, K, d_model]
+
+            if self.enc_t_pe is not None:
+                t_pe = self.enc_t_pe.unsqueeze(2).to(x.device)  # [1, T, 1, d_model]
+                proj_x = proj_x + t_pe
+
+            if self.enc_slots_pe is not None:
+                slots_pe = self.enc_slots_pe.unsqueeze(1).to(x.device)  # [1, 1, K, d_model]
+                proj_x = proj_x + slots_pe
+
+            layer_out = proj_x
+            for layer in self.layers:
+                layer_out = layer(layer_out)  # [B, T, K, d_model]
+
+            # Predict next step slots from the last timestep tokens
+            last_timestep_tokens = layer_out[:, -1]  # [B, K, d_model]
+            pred_slots = self.out_proj(last_timestep_tokens)  # [B, K, slot_size]
+            pred_out.append(pred_slots)
+
+            # Shift sequence window: drop oldest frame slots and append newly predicted slots
+            curr_x = torch.cat([curr_x[:, 1:], pred_slots.unsqueeze(1)], dim=1)
+
+        return torch.stack(pred_out, dim=1)  # [B, pred_len, K, slot_size]
+
+
 class SlotFormerModel(nn.Module):
     """
     Combined Stage 2 SlotFormer Model wrapping a frozen Stage 1 slot extractor/decoder
-    and a SlotRollouter Transformer.
+    and a SlotRollouter Transformer (Standard or OCVP Factorized).
     """
 
     def __init__(
@@ -144,6 +307,7 @@ class SlotFormerModel(nn.Module):
         slots_pe: str = "",
         loss_decay_factor: float = 1.0,
         use_img_recon_loss: bool = False,
+        rollouter_type: str = "standard",
     ) -> None:
         super().__init__()
         self.stage1_model = stage1_model
@@ -151,6 +315,7 @@ class SlotFormerModel(nn.Module):
         self.rollout_len = rollout_len
         self.loss_decay_factor = loss_decay_factor
         self.use_img_recon_loss = use_img_recon_loss
+        self.rollouter_type = rollouter_type.lower()
 
         inner_savi = get_inner_savi(stage1_model)
         if hasattr(inner_savi, "num_slots"):
@@ -163,17 +328,30 @@ class SlotFormerModel(nn.Module):
         self.num_slots = num_slots
         self.slot_dim = slot_dim
 
-        self.rollouter = SlotRollouter(
-            num_slots=num_slots,
-            slot_size=slot_dim,
-            history_len=history_len,
-            t_pe=t_pe,
-            slots_pe=slots_pe,
-            d_model=d_model,
-            num_layers=num_layers,
-            num_heads=num_heads,
-            ffn_dim=ffn_dim,
-        )
+        if self.rollouter_type in ("ocvp", "factorized", "ocvp_slotformer"):
+            self.rollouter = OCVPSlotRollouter(
+                num_slots=num_slots,
+                slot_size=slot_dim,
+                history_len=history_len,
+                t_pe=t_pe,
+                slots_pe=slots_pe,
+                d_model=d_model,
+                num_layers=num_layers,
+                num_heads=num_heads,
+                ffn_dim=ffn_dim,
+            )
+        else:
+            self.rollouter = SlotRollouter(
+                num_slots=num_slots,
+                slot_size=slot_dim,
+                history_len=history_len,
+                t_pe=t_pe,
+                slots_pe=slots_pe,
+                d_model=d_model,
+                num_layers=num_layers,
+                num_heads=num_heads,
+                ffn_dim=ffn_dim,
+            )
 
         # Freeze Stage 1 model parameters
         for p in self.stage1_model.parameters():
@@ -189,6 +367,7 @@ class SlotFormerModel(nn.Module):
     def extract_slots(self, video: torch.Tensor) -> torch.Tensor:
         """
         Extract per-frame slots for full video [B, T, C, H, W] using Stage 1 model.
+        Optimized to batch-encode all T frames through the CNN backbone in a single GPU pass.
         Returns: [B, T, K, D]
         """
         inner_savi = get_inner_savi(self.stage1_model)
@@ -197,13 +376,17 @@ class SlotFormerModel(nn.Module):
         if hasattr(inner_savi, "_reset_rnn"):
             inner_savi._reset_rnn()
 
+        # Batch-encode all T frames at once to maximize GPU parallelism
+        video_flat = video.flatten(0, 1)  # [B*T, C, H, W]
+        enc_out_all = inner_savi._get_encoder_out(video_flat)  # [B*T, HW, enc_channels]
+        enc_out_all = enc_out_all.unflatten(0, (B, T))  # [B, T, HW, enc_channels]
+
         init_latents = inner_savi.init_latents.repeat(B, 1, 1)
         prev_slots = None
         all_slots = []
 
         for t in range(T):
-            img_t = video[:, t]
-            enc_out_t = inner_savi._get_encoder_out(img_t)
+            enc_out_t = enc_out_all[:, t]
             if prev_slots is None:
                 latents = init_latents
             else:

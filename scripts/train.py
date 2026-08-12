@@ -1,102 +1,106 @@
 #!/usr/bin/env python3
 """
-Unified Baseline Training CLI Entrypoint powered by Hydra.
+Hydra Modular Training Entrypoint.
 
-This script is a thin entrypoint: it resolves the Hydra config, builds the
-model / dataloaders / optimizer, then delegates the full training loop to
-``src.training.train_loop.run_training``.
-
-Usage
------
-  python scripts/train.py                              # DETR on PushT (default)
-  python scripts/train.py model=savi                  # SAVi on PushT
-  python scripts/train.py model=savi dataset=gridshapes
-  python scripts/train.py dry_run=true                # Fast 5-batch smoke test
-  python scripts/train.py model=deformable_savi ckpt_path=scratch/checkpoints/.../model_best.pt
+Usage:
+    python scripts/train.py                           # Default: Deformable SAVi on PushT
+    python scripts/train.py model=savi loss=savi_sigreg  # Standard SAVi with SIGReg loss
+    python scripts/train.py experiment=slotformer_pusht  # Stage 2 SlotFormer training
 """
 
 import os
-
+import sys
 import hydra
-import torch
 from omegaconf import DictConfig, OmegaConf
+import torch
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 from src.models.factory import build_model
 from src.datasets.factory import build_dataloader
-from src.training.trainer import BaseTrainer
-from src.training.train_loop import TrainConfig, run_training
-from src.utils.training_utils import get_device, set_seed, load_checkpoint_state
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from src.losses import build_loss
+from src.training import BaseTrainer, TrainConfig, run_training
+from src.utils.training_utils import set_seed, load_checkpoint_state
 
 
-def _save_checkpoint(model, path: str, epoch: int) -> None:
-    """Save model state dict + epoch to ``path``."""
-    torch.save({"model_state": model.state_dict(), "epoch": epoch}, path)
+def _save_checkpoint(model: torch.nn.Module, path: str, epoch: int) -> None:
+    """Save checkpoint file to path."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    state = getattr(model, "model", model).state_dict()
+    payload = {
+        "model_state": state,
+        "epoch": epoch,
+    }
+    torch.save(payload, path)
     print(f"Saved checkpoint: {path}")
+
+
+def _auto_dvc_commit(best_path: str) -> None:
+    """Track best checkpoint with DVC and execute dvc commit at the end of training."""
+    if not os.path.isfile(best_path):
+        return
+
+    import subprocess
+    dvc_bin = os.path.join(os.path.dirname(sys.executable), "dvc")
+    add_cmd = [dvc_bin, "add", best_path] if os.path.exists(dvc_bin) else [sys.executable, "-m", "dvc", "add", best_path]
+    dvc_file = f"{best_path}.dvc"
+    commit_cmd = [dvc_bin, "commit", "-f", dvc_file] if os.path.exists(dvc_bin) else [sys.executable, "-m", "dvc", "commit", "-f", dvc_file]
+
+    try:
+        res_add = subprocess.run(add_cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+        if res_add.returncode == 0:
+            print(f"DVC: Added {best_path}")
+            res_commit = subprocess.run(commit_cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+            if res_commit.returncode == 0:
+                print(f"DVC: Successfully committed {dvc_file} with DVC!")
+            else:
+                print(f"DVC: Notice — `dvc commit` result: {res_commit.stdout.strip() or res_commit.stderr.strip()}")
+        else:
+            print(f"DVC: Warning — `dvc add` failed for {best_path}: {res_add.stderr.strip()}")
+    except Exception as e:
+        print(f"DVC: Notice — DVC tracking skipped ({e}).")
 
 
 @hydra.main(config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
+    set_seed(cfg.seed)
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
-    device = get_device(cfg.get("device"))
-    set_seed(int(cfg.get("seed", 42)))
-
-    model_name = cfg.model.name
-    dataset_name = cfg.dataset.name
-    exp_name = cfg.get("exp_name", f"{model_name}_{dataset_name}")
-    ckpt_dir = os.path.join(REPO_ROOT, "scratch", "checkpoints", exp_name)
-
-    # ── Set up trainer (TensorBoard + WandB + file logging) ───────────────
-    use_wandb = bool(cfg.get("use_wandb", True))
-    wandb_project = str(cfg.get("wandb_project", "pusht-contact-sim"))
-    trainer = BaseTrainer(
-        save_dir=ckpt_dir,
-        experiment_name=exp_name,
-        use_wandb=use_wandb,
-        wandb_project=wandb_project,
-        cfg_dict=cfg_dict,
-    )
-
-    # Save human-readable config snapshot for experiment tracking
+    ckpt_dir = os.path.join(REPO_ROOT, "scratch", "checkpoints", cfg.exp_name)
     os.makedirs(ckpt_dir, exist_ok=True)
-    cfg_save_path = os.path.join(ckpt_dir, "config.yaml")
-    with open(cfg_save_path, "w") as f:
-        f.write(OmegaConf.to_yaml(cfg))
-    print(f"Saved experiment configuration to: {cfg_save_path}")
+
+    # Save resolved config snapshot to checkpoint directory
+    config_save_path = os.path.join(ckpt_dir, "config.yaml")
+    with open(config_save_path, "w") as f:
+        f.write(OmegaConf.to_yaml(cfg, resolve=True))
 
     print("=" * 70)
-    print(f"            Hydra Baseline Trainer ({model_name} / {dataset_name})")
+    print(f"            Hydra Baseline Trainer ({cfg.model.name} / {cfg.dataset.name})")
     print("=" * 70)
-    print(f"Device:               {device}")
+    print(f"Device:               {cfg.device}")
     print(f"Checkpoint Directory: {ckpt_dir}")
 
-    # ── Build model ───────────────────────────────────────────────────────
-    if cfg.get("ckpt_path"):
-        ckpt_path = cfg.ckpt_path
-        if not os.path.isabs(ckpt_path):
-            ckpt_path = os.path.join(REPO_ROOT, ckpt_path)
-        model = build_model(cfg_dict).to(device)
-        load_checkpoint_state(model, ckpt_path, device=device)
-        print(f"Loaded weights from: {ckpt_path}")
-    else:
-        model = build_model(cfg_dict).to(device)
+    device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
 
-    match_mode = (
-        getattr(model, "_weight_dict", {}) or {}
-    ).get("match_mode", "hungarian")
-    print(f"Slot Matching Mode: '{match_mode.upper()}'")
-    print(f"Model '{model_name}' ready (via registry).")
+    # ── 1. Build Model ────────────────────────────────────────────────────
+    model = build_model(cfg_dict).to(device)
+    model_name = cfg.model.name
 
-    # ── Build dataloaders ─────────────────────────────────────────────────
-    batch_size = cfg.batch_size
-    num_workers = cfg.get("num_workers", 4)
-    train_loader = build_dataloader(cfg_dict, split="train", batch_size=batch_size, num_workers=num_workers)
-    val_loader = build_dataloader(cfg_dict, split="val", batch_size=batch_size, num_workers=num_workers)
-    print(f"Train Batches: {len(train_loader)} | Val Batches: {len(val_loader)} | Batch Size: {batch_size}")
+    # ── Option: Resume from checkpoint if specified ───────────────────────
+    if cfg.ckpt_path is not None:
+        load_checkpoint_state(model, cfg.ckpt_path, device=device)
 
-    # ── Build optimizer + scaler ──────────────────────────────────────────
+    # ── 2. Build DataLoaders ──────────────────────────────────────────────
+    train_loader = build_dataloader(cfg_dict, split="train")
+    val_loader = build_dataloader(cfg_dict, split="val")
+
+    # ── 3. Build Loss Function & Trainer ──────────────────────────────────
+    loss_fn = build_loss(cfg_dict)
+    trainer = BaseTrainer(save_dir=ckpt_dir, experiment_name=cfg.exp_name, use_wandb=cfg.get("use_wandb", False), cfg_dict=cfg_dict)
+
+    # ── 4. Build Optimizer & Scaler ───────────────────────────────────────
     train_cfg = TrainConfig.from_cfg(cfg_dict, ckpt_dir=ckpt_dir, model_name=model_name)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -122,19 +126,10 @@ def main(cfg: DictConfig) -> None:
     trainer.close()
     print("Training finished successfully!")
 
-    # ── Auto DVC tracking ─────────────────────────────────────────────────
+    # ── Auto DVC tracking & commit ────────────────────────────────────────
     if cfg.get("auto_dvc", True):
         best_path = os.path.join(ckpt_dir, f"{model_name}_best.pt")
-        if os.path.isfile(best_path):
-            import subprocess
-            result = subprocess.run(
-                ["dvc", "add", best_path],
-                cwd=REPO_ROOT, capture_output=True, text=True,
-            )
-            if result.returncode == 0:
-                print(f"DVC: Tracked {best_path}")
-            else:
-                print(f"DVC: Warning — `dvc add` failed for {best_path}: {result.stderr.strip()}")
+        _auto_dvc_commit(best_path)
 
 
 if __name__ == "__main__":

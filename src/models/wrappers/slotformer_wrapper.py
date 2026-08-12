@@ -18,10 +18,11 @@ from src.models.factory import register_model, build_model
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
-@register_model(["slotformer", "slot_former"])
+@register_model(["slotformer", "slot_former", "ocvp_slotformer", "ocvp-slotformer", "factorized_slotformer"])
 class StandardizedSlotFormerWrapper(BaseModelWrapper):
     """
     SlotFormer Stage 2 wrapper conforming to ``BaseModelWrapper``.
+    Supports both standard SlotFormer and OCVP Factorized SlotRollouter variants.
     """
 
     def __init__(
@@ -46,7 +47,7 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
 
         stage1_model_type = model_cfg.get("stage1_model_type", "")
         if not stage1_model_type:
-            if "deformable" in stage1_ckpt_path.lower():
+            if stage1_ckpt_path and "deformable" in stage1_ckpt_path.lower():
                 stage1_model_type = "deformable_savi"
             else:
                 stage1_model_type = "savi"
@@ -79,6 +80,10 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         loss_decay_factor = model_cfg.get("loss_decay_factor", 1.0)
         use_img_recon_loss = model_cfg.get("use_img_recon_loss", False)
 
+        model_type_str = str(model_cfg.get("type", model_cfg.get("name", ""))).lower()
+        default_rollouter_type = "ocvp" if "ocvp" in model_type_str or "factorized" in model_type_str else "standard"
+        rollouter_type = model_cfg.get("rollouter_type", default_rollouter_type)
+
         slotformer_model = SlotFormerModel(
             stage1_model=stage1_wrapper,
             history_len=history_len,
@@ -91,6 +96,7 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
             slots_pe=slots_pe,
             loss_decay_factor=loss_decay_factor,
             use_img_recon_loss=use_img_recon_loss,
+            rollouter_type=rollouter_type,
         )
 
         return cls(slotformer_model, resolution=res)

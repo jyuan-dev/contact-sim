@@ -151,7 +151,7 @@ class TestPushTMaskDatasetIntegration(unittest.TestCase):
     def test_sample_shapes(self):
         ds = PushTMaskHDF5Dataset(
             h5_path=self.H5_PATH, split="train",
-            resolution=(64, 64), n_sample_frames=6, frame_offset=1, train_frac=0.8
+            resolution=(64, 64), n_sample_frames=6, frame_offset=1, train_frac=0.8, load_masks=True
         )
         sample = ds[0]
         self.assertIn('img', sample)
@@ -164,7 +164,7 @@ class TestPushTMaskDatasetIntegration(unittest.TestCase):
     def test_mask_value_range(self):
         ds = PushTMaskHDF5Dataset(
             h5_path=self.H5_PATH, split="train",
-            resolution=(64, 64), n_sample_frames=6, frame_offset=1, train_frac=0.8
+            resolution=(64, 64), n_sample_frames=6, frame_offset=1, train_frac=0.8, load_masks=True
         )
         sample = ds[0]
         self.assertGreaterEqual(sample['gt_masks'].min().item(), 0.0)
