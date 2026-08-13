@@ -168,12 +168,15 @@ def run_epoch(
                     break
 
             # ── Forward pass ─────────────────────────────────────────────
-            video = batch["img"].to(device, non_blocking=True)
+            batch_device = {
+                k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v
+                for k, v in batch.items()
+            }
 
             try:
                 with torch.amp.autocast(device.type, enabled=cfg.use_amp):
-                    out = model(video)
-                    loss, loss_dict = model.compute_loss(out, batch)
+                    out = model(batch_device)
+                    loss, loss_dict = model.compute_loss(out, batch_device)
             except ValueError as err:
                 if is_train:
                     print("\n" + "!" * 80)
@@ -395,6 +398,9 @@ def run_training(
 
         # ── Checkpoint ────────────────────────────────────────────────────
         import os
+        epoch_ckpt_path = os.path.join(cfg.ckpt_dir, f"{cfg.model_name}_epoch{epoch + 1}.pt")
+        save_checkpoint_fn(model, epoch_ckpt_path, epoch + 1)
+
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             best_path = os.path.join(cfg.ckpt_dir, f"{cfg.model_name}_best.pt")

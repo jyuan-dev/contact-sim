@@ -187,9 +187,19 @@ class OCVPRollouterLayer(nn.Module):
       1. LayerNorm -> TemporalSelfAttention -> Residual
       2. LayerNorm -> InteractiveSelfAttention -> Residual
       3. LayerNorm -> SlotTransitionMLP -> Residual
+    Supports optional FiLM conditioning on action embeddings.
     """
-    def __init__(self, d_model: int, num_heads: int, ffn_dim: int, dropout: float = 0.0) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        ffn_dim: int,
+        dropout: float = 0.0,
+        condition_mode: str = "none",
+        action_emb_dim: int = 64,
+    ) -> None:
         super().__init__()
+        self.condition_mode = condition_mode.lower()
         self.norm1 = nn.LayerNorm(d_model)
         self.temporal_attn = TemporalSelfAttention(d_model=d_model, num_heads=num_heads, dropout=dropout)
 
@@ -199,24 +209,31 @@ class OCVPRollouterLayer(nn.Module):
         self.norm3 = nn.LayerNorm(d_model)
         self.slot_transition = SlotTransitionMLP(d_model=d_model, ffn_dim=ffn_dim, dropout=dropout)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # 1. Temporal Motion Self-Attention (over T)
-        x = x + self.temporal_attn(self.norm1(x))
-        # 2. Inter-Slot Interactive Self-Attention (over K)
-        x = x + self.interactive_attn(self.norm2(x))
-        # 3. Slot Latent State Transition MLP
-        x = x + self.slot_transition(self.norm3(x))
+        if self.condition_mode == "film":
+            self.modulation = nn.Sequential(
+                nn.SiLU(),
+                nn.Linear(action_emb_dim, 6 * d_model),
+            )
+            nn.init.zeros_(self.modulation[-1].weight)
+            nn.init.zeros_(self.modulation[-1].bias)
+
+    def forward(self, x: torch.Tensor, action_emb: torch.Tensor | None = None) -> torch.Tensor:
+        if self.condition_mode == "film" and action_emb is not None:
+            shift_a, scale_a, gate_a, shift_m, scale_m, gate_m = self.modulation(action_emb).chunk(6, dim=-1)
+            x = x + gate_a * self.temporal_attn(self.norm1(x) * (1 + scale_a) + shift_a)
+            x = x + self.interactive_attn(self.norm2(x))
+            x = x + gate_m * self.slot_transition(self.norm3(x) * (1 + scale_m) + shift_m)
+        else:
+            x = x + self.temporal_attn(self.norm1(x))
+            x = x + self.interactive_attn(self.norm2(x))
+            x = x + self.slot_transition(self.norm3(x))
         return x
 
 
 class OCVPSlotRollouter(nn.Module):
     """
     OCVP Factorized Autoregressive Rollouter for Slot Latents.
-
-    Takes past slot tokens [B, history_len, num_slots, slot_size],
-    applies spatial-temporal position encodings, and iterates through
-    N stacked OCVPRollouterLayers (Temporal Attention -> Interactive Attention -> Slot Transition MLP)
-    to autoregressively predict future slot tokens for pred_len steps.
+    Supports Action-Conditioned OCVP (cOCVP) with 'sum', 'concat', and 'film' modes.
     """
 
     def __init__(
@@ -230,16 +247,47 @@ class OCVPSlotRollouter(nn.Module):
         num_layers: int = 4,
         num_heads: int = 8,
         ffn_dim: int = 512,
+        raw_action_dim: int = 0,
+        action_embed_dim: int = 64,
+        condition_mode: str = "none",
     ) -> None:
         super().__init__()
         self.num_slots = num_slots
         self.slot_size = slot_size
         self.history_len = history_len
+        self.raw_action_dim = raw_action_dim
+        self.action_embed_dim = action_embed_dim
+        self.condition_mode = condition_mode.lower()
 
-        self.in_proj = nn.Linear(slot_size, d_model)
+        if self.raw_action_dim > 0 and self.condition_mode != "none":
+            if self.condition_mode in ("sum", "film"):
+                self.action_encoder = nn.Sequential(
+                    nn.Linear(raw_action_dim, action_embed_dim),
+                    nn.SiLU(),
+                    nn.Linear(action_embed_dim, d_model if self.condition_mode == "sum" else action_embed_dim),
+                )
+                self.in_proj = nn.Linear(slot_size, d_model)
+            elif self.condition_mode == "concat":
+                self.action_encoder = nn.Sequential(
+                    nn.Linear(raw_action_dim, action_embed_dim),
+                    nn.SiLU(),
+                    nn.Linear(action_embed_dim, action_embed_dim),
+                )
+                self.in_proj = nn.Linear(slot_size + action_embed_dim, d_model)
+            else:
+                raise ValueError(f"Unsupported condition_mode: '{condition_mode}'")
+        else:
+            self.action_encoder = None
+            self.in_proj = nn.Linear(slot_size, d_model)
 
         self.layers = nn.ModuleList([
-            OCVPRollouterLayer(d_model=d_model, num_heads=num_heads, ffn_dim=ffn_dim)
+            OCVPRollouterLayer(
+                d_model=d_model,
+                num_heads=num_heads,
+                ffn_dim=ffn_dim,
+                condition_mode=self.condition_mode,
+                action_emb_dim=action_embed_dim,
+            )
             for _ in range(num_layers)
         ])
 
@@ -247,11 +295,17 @@ class OCVPSlotRollouter(nn.Module):
         self.enc_slots_pe = build_pos_enc(slots_pe, num_slots, d_model)
         self.out_proj = nn.Linear(d_model, slot_size)
 
-    def forward(self, x: torch.Tensor, pred_len: int) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        pred_len: int,
+        actions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """
         Args:
             x: [B, history_len, num_slots, slot_size]
             pred_len: Number of future timesteps to rollout
+            actions: Action sequence [B, T_act, raw_action_dim] or None
 
         Returns:
             [B, pred_len, num_slots, slot_size]
@@ -259,30 +313,51 @@ class OCVPSlotRollouter(nn.Module):
         assert x.shape[1] == self.history_len, f"Expected history_len={self.history_len}, got {x.shape[1]}"
         B = x.shape[0]
 
+        act_emb_seq = None
+        if self.action_encoder is not None and actions is not None:
+            act_emb_seq = self.action_encoder(actions)  # [B, T_act, D_act]
+
         curr_x = x  # [B, history_len, num_slots, slot_size]
         pred_out = []
 
         for _ in range(pred_len):
-            proj_x = self.in_proj(curr_x)  # [B, T, K, d_model]
+            curr_t_len = curr_x.shape[1]
+            if act_emb_seq is not None and act_emb_seq.shape[1] >= curr_t_len:
+                a_sub = act_emb_seq[:, :curr_t_len]  # [B, curr_t_len, D_act]
+                a_sub_slots = a_sub.unsqueeze(2).repeat(1, 1, self.num_slots, 1)  # [B, curr_t_len, K, D_act]
+
+                if self.condition_mode == "sum":
+                    proj_x = self.in_proj(curr_x) + a_sub_slots
+                    film_act_emb = None
+                elif self.condition_mode == "concat":
+                    proj_x = self.in_proj(torch.cat([curr_x, a_sub_slots], dim=-1))
+                    film_act_emb = None
+                elif self.condition_mode == "film":
+                    proj_x = self.in_proj(curr_x)
+                    film_act_emb = a_sub_slots
+                else:
+                    proj_x = self.in_proj(curr_x)
+                    film_act_emb = None
+            else:
+                proj_x = self.in_proj(curr_x)
+                film_act_emb = None
 
             if self.enc_t_pe is not None:
-                t_pe = self.enc_t_pe.unsqueeze(2).to(x.device)  # [1, T, 1, d_model]
-                proj_x = proj_x + t_pe
+                t_pe = self.enc_t_pe.unsqueeze(2).to(x.device)
+                proj_x = proj_x + t_pe[:, :curr_t_len]
 
             if self.enc_slots_pe is not None:
-                slots_pe = self.enc_slots_pe.unsqueeze(1).to(x.device)  # [1, 1, K, d_model]
+                slots_pe = self.enc_slots_pe.unsqueeze(1).to(x.device)
                 proj_x = proj_x + slots_pe
 
             layer_out = proj_x
             for layer in self.layers:
-                layer_out = layer(layer_out)  # [B, T, K, d_model]
+                layer_out = layer(layer_out, action_emb=film_act_emb)
 
-            # Predict next step slots from the last timestep tokens
-            last_timestep_tokens = layer_out[:, -1]  # [B, K, d_model]
-            pred_slots = self.out_proj(last_timestep_tokens)  # [B, K, slot_size]
+            last_timestep_tokens = layer_out[:, -1]
+            pred_slots = self.out_proj(last_timestep_tokens)
             pred_out.append(pred_slots)
 
-            # Shift sequence window: drop oldest frame slots and append newly predicted slots
             curr_x = torch.cat([curr_x[:, 1:], pred_slots.unsqueeze(1)], dim=1)
 
         return torch.stack(pred_out, dim=1)  # [B, pred_len, K, slot_size]
@@ -291,7 +366,8 @@ class OCVPSlotRollouter(nn.Module):
 class SlotFormerModel(nn.Module):
     """
     Combined Stage 2 SlotFormer Model wrapping a frozen Stage 1 slot extractor/decoder
-    and a SlotRollouter Transformer (Standard or OCVP Factorized).
+    and a SlotRollouter Transformer (Standard or Action-Conditioned OCVP cOCVP).
+    Supports optional INTACT RobotSlotIntentActionActor joint loss training.
     """
 
     def __init__(
@@ -308,6 +384,12 @@ class SlotFormerModel(nn.Module):
         loss_decay_factor: float = 1.0,
         use_img_recon_loss: bool = False,
         rollouter_type: str = "standard",
+        raw_action_dim: int = 0,
+        action_embed_dim: int = 64,
+        condition_mode: str = "none",
+        use_intact_actor: bool = False,
+        action_loss_weight: float = 1.0,
+        robot_slot_idx: int = 0,
     ) -> None:
         super().__init__()
         self.stage1_model = stage1_model
@@ -316,6 +398,8 @@ class SlotFormerModel(nn.Module):
         self.loss_decay_factor = loss_decay_factor
         self.use_img_recon_loss = use_img_recon_loss
         self.rollouter_type = rollouter_type.lower()
+        self.use_intact_actor = use_intact_actor
+        self.action_loss_weight = action_loss_weight
 
         inner_savi = get_inner_savi(stage1_model)
         if hasattr(inner_savi, "num_slots"):
@@ -328,7 +412,7 @@ class SlotFormerModel(nn.Module):
         self.num_slots = num_slots
         self.slot_dim = slot_dim
 
-        if self.rollouter_type in ("ocvp", "factorized", "ocvp_slotformer"):
+        if self.rollouter_type in ("ocvp", "factorized", "ocvp_slotformer", "cocvp"):
             self.rollouter = OCVPSlotRollouter(
                 num_slots=num_slots,
                 slot_size=slot_dim,
@@ -339,6 +423,9 @@ class SlotFormerModel(nn.Module):
                 num_layers=num_layers,
                 num_heads=num_heads,
                 ffn_dim=ffn_dim,
+                raw_action_dim=raw_action_dim,
+                action_embed_dim=action_embed_dim,
+                condition_mode=condition_mode,
             )
         else:
             self.rollouter = SlotRollouter(
@@ -352,6 +439,17 @@ class SlotFormerModel(nn.Module):
                 num_heads=num_heads,
                 ffn_dim=ffn_dim,
             )
+
+        if use_intact_actor and raw_action_dim > 0:
+            from src.models.intact_actor import RobotSlotIntentActionActor
+            self.intact_actor = RobotSlotIntentActionActor(
+                slot_dim=slot_dim,
+                action_dim=raw_action_dim,
+                action_emb_dim=action_embed_dim,
+                robot_slot_idx=robot_slot_idx,
+            )
+        else:
+            self.intact_actor = None
 
         # Freeze Stage 1 model parameters
         for p in self.stage1_model.parameters():
@@ -367,7 +465,6 @@ class SlotFormerModel(nn.Module):
     def extract_slots(self, video: torch.Tensor) -> torch.Tensor:
         """
         Extract per-frame slots for full video [B, T, C, H, W] using Stage 1 model.
-        Optimized to batch-encode all T frames through the CNN backbone in a single GPU pass.
         Returns: [B, T, K, D]
         """
         inner_savi = get_inner_savi(self.stage1_model)
@@ -376,7 +473,6 @@ class SlotFormerModel(nn.Module):
         if hasattr(inner_savi, "_reset_rnn"):
             inner_savi._reset_rnn()
 
-        # Batch-encode all T frames at once to maximize GPU parallelism
         video_flat = video.flatten(0, 1)  # [B*T, C, H, W]
         enc_out_all = inner_savi._get_encoder_out(video_flat)  # [B*T, HW, enc_channels]
         enc_out_all = enc_out_all.unflatten(0, (B, T))  # [B, T, HW, enc_channels]
@@ -406,8 +502,10 @@ class SlotFormerModel(nn.Module):
         """
         if isinstance(batch, torch.Tensor):
             video = batch
+            actions = None
         else:
             video = batch["img"]
+            actions = batch.get("action", None)
 
         B, T = video.shape[:2]
 
@@ -417,7 +515,10 @@ class SlotFormerModel(nn.Module):
         history_slots = gt_all_slots[:, :self.history_len]
         gt_rollout_slots = gt_all_slots[:, self.history_len:self.history_len + self.rollout_len]
 
-        pred_rollout_slots = self.rollouter(history_slots, pred_len=self.rollout_len)
+        if hasattr(self.rollouter, "forward") and "actions" in self.rollouter.forward.__code__.co_varnames:
+            pred_rollout_slots = self.rollouter(history_slots, pred_len=self.rollout_len, actions=actions)
+        else:
+            pred_rollout_slots = self.rollouter(history_slots, pred_len=self.rollout_len)
 
         out_dict = {
             "gt_slots": gt_rollout_slots,
@@ -425,6 +526,22 @@ class SlotFormerModel(nn.Module):
             "history_slots": history_slots,
             "input_img": video,
         }
+
+        # Calculate INTACT RobotSlotIntentActionActor outputs if enabled
+        if self.intact_actor is not None and actions is not None and actions.shape[1] >= 1:
+            # Predict action a_0 given transition z_0 (history_slots[:, 0]) -> z_1 (history_slots[:, 1])
+            z_curr = gt_all_slots[:, 0]
+            z_next = gt_all_slots[:, 1]
+            target_act = actions[:, 0]  # Action a_0 that drives z_0 -> z_1
+            prev_act = None             # No previous action at t=0
+
+            act_loss_dict = self.intact_actor.action_nll(
+                z_curr=z_curr,
+                z_next=z_next,
+                target_action=target_act,
+                prev_action=prev_act,
+            )
+            out_dict["action_nll_dict"] = act_loss_dict
 
         if self.use_img_recon_loss or not self.training:
             full_slots = torch.cat([history_slots, pred_rollout_slots], dim=1)
@@ -439,7 +556,7 @@ class SlotFormerModel(nn.Module):
         return out_dict
 
     def calc_train_loss(self, out_dict: dict, batch: dict) -> tuple[torch.Tensor, dict[str, float]]:
-        """Calculate Stage 2 Slot MSE Loss with temporal decay."""
+        """Calculate Stage 2 Loss (Slot MSE + optional Action NLL)."""
         gt_slots = out_dict["gt_slots"]      # [B, rollout_len, K, D]
         pred_slots = out_dict["pred_slots"]  # [B, rollout_len, K, D]
 
@@ -455,6 +572,15 @@ class SlotFormerModel(nn.Module):
 
         loss_metrics = {"loss": total_loss.item(), "slot_mse": slot_recon_loss.item()}
 
+        if "action_nll_dict" in out_dict:
+            act_dict = out_dict["action_nll_dict"]
+            act_loss = act_dict["loss"]
+            total_loss = total_loss + self.action_loss_weight * act_loss
+            loss_metrics["action_nll"] = act_loss.item()
+            loss_metrics["action_mae"] = act_dict["action_mae"].item()
+            loss_metrics["action_rmse"] = act_dict["action_rmse"].item()
+            loss_metrics["loss"] = total_loss.item()
+
         if self.use_img_recon_loss and "recon_img" in out_dict:
             video = out_dict["input_img"]
             rollout_recon = out_dict["recon_img"][:, self.history_len:self.history_len + self.rollout_len]
@@ -465,3 +591,4 @@ class SlotFormerModel(nn.Module):
             loss_metrics["loss"] = total_loss.item()
 
         return total_loss, loss_metrics
+

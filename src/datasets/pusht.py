@@ -124,6 +124,10 @@ class PushTMaskHDF5Dataset(Dataset):
             'img': img,
         }
 
+        if 'action' in self.h5:
+            act = self.h5['action'][abs_idxs]
+            item['action'] = torch.from_numpy(act.astype(np.float32))
+
         if self.load_masks:
             masks = {k: self.h5[k][abs_idxs] for k in self.MASK_KEYS}
             agent_m = torch.from_numpy((masks['agent_masks'] > 127).astype(np.float32))

@@ -18,11 +18,17 @@ from src.models.factory import register_model, build_model
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
-@register_model(["slotformer", "slot_former", "ocvp_slotformer", "ocvp-slotformer", "factorized_slotformer"])
+@register_model([
+    "slotformer", "slot_former", "ocvp_slotformer", "ocvp-slotformer",
+    "factorized_slotformer", "cocvp_slotformer", "cocvp-slotformer",
+    "cocvp_slotformer_film", "cocvp_slotformer_sum", "cocvp_slotformer_concat",
+    "intact_slotformer", "intact_ocvp_slotformer", "ocvp_intact_slotformer"
+])
 class StandardizedSlotFormerWrapper(BaseModelWrapper):
     """
     SlotFormer Stage 2 wrapper conforming to ``BaseModelWrapper``.
-    Supports both standard SlotFormer and OCVP Factorized SlotRollouter variants.
+    Supports standard SlotFormer, OCVP Factorized, Action-Conditioned (cOCVP),
+    and INTACT RobotSlotIntentActionActor variants.
     """
 
     def __init__(
@@ -81,8 +87,17 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         use_img_recon_loss = model_cfg.get("use_img_recon_loss", False)
 
         model_type_str = str(model_cfg.get("type", model_cfg.get("name", ""))).lower()
-        default_rollouter_type = "ocvp" if "ocvp" in model_type_str or "factorized" in model_type_str else "standard"
+        default_rollouter_type = "cocvp" if "cocvp" in model_type_str else (
+            "ocvp" if "ocvp" in model_type_str or "factorized" in model_type_str else "standard"
+        )
         rollouter_type = model_cfg.get("rollouter_type", default_rollouter_type)
+
+        raw_action_dim = model_cfg.get("raw_action_dim", model_cfg.get("action_dim", 2))
+        action_embed_dim = model_cfg.get("action_embed_dim", model_cfg.get("action_emb_dim", 64))
+        condition_mode = model_cfg.get("condition_mode", "none")
+        use_intact_actor = model_cfg.get("use_intact_actor", model_cfg.get("use_intact", "intact" in model_type_str))
+        action_loss_weight = model_cfg.get("action_loss_weight", 1.0)
+        robot_slot_idx = model_cfg.get("robot_slot_idx", 0)
 
         slotformer_model = SlotFormerModel(
             stage1_model=stage1_wrapper,
@@ -97,13 +112,19 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
             loss_decay_factor=loss_decay_factor,
             use_img_recon_loss=use_img_recon_loss,
             rollouter_type=rollouter_type,
+            raw_action_dim=raw_action_dim,
+            action_embed_dim=action_embed_dim,
+            condition_mode=condition_mode,
+            use_intact_actor=use_intact_actor,
+            action_loss_weight=action_loss_weight,
+            robot_slot_idx=robot_slot_idx,
         )
 
         return cls(slotformer_model, resolution=res)
 
     def forward(self, x: dict | Tensor) -> ModelOutput:
         out_dict = self.model(x)
-        return {
+        res = {
             "input_img": out_dict.get("input_img"),
             "pred_boxes": None,
             "pred_logits": None,
@@ -113,8 +134,12 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
             "gt_slots": out_dict.get("gt_slots"),
             "pred_slots": out_dict.get("pred_slots"),
         }
+        if "action_nll_dict" in out_dict:
+            res["action_nll_dict"] = out_dict["action_nll_dict"]
+        return res
 
     def compute_loss(
         self, out: ModelOutput, batch: dict
     ) -> tuple[Tensor, dict[str, float]]:
         return self.model.calc_train_loss(out, batch)
+

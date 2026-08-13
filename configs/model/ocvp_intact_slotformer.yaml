@@ -1,0 +1,35 @@
+# INTACT-grounded Action-Conditioned OCVP Model Configuration
+name: "ocvp_intact_slotformer"
+type: "ocvp_intact_slotformer"
+rollouter_type: "cocvp"
+
+stage1_ckpt_path: "scratch/checkpoints/savi_pusht_default_4ep/savi_best.pt"
+stage1_model_type: "savi"
+
+resolution: [64, 64]
+n_sample_frames: 6
+history_len: 2
+rollout_len: 4
+
+# cOCVP & INTACT Action Conditioning Parameters
+raw_action_dim: 2
+action_embed_dim: 64
+condition_mode: "sum"
+
+# INTACT RobotSlotIntentActionActor
+use_intact_actor: true
+action_loss_weight: 1.0
+robot_slot_idx: 0
+
+d_model: 128
+num_layers: 4
+num_heads: 8
+ffn_dim: 512
+t_pe: "sin"
+slots_pe: ""
+loss_decay_factor: 1.0
+use_img_recon_loss: false
+
+weight_dict:
+  slot_mse: 1.0
+  action_nll: 1.0
