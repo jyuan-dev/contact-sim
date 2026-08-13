@@ -16,3 +16,6 @@
 [submodule "third_party/stable-worldmodel"]
 	path = third_party/stable-worldmodel
 	url = https://github.com/galilai-group/stable-worldmodel.git
+[submodule "third_party/INTACT-JEPA"]
+	path = third_party/INTACT-JEPA
+	url = https://github.com/zju3dv/INTACT-JEPA.git
