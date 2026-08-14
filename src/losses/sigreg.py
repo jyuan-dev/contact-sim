@@ -13,8 +13,9 @@ class SIGRegLoss(nn.Module):
     """
     Sketched Isotropic Gaussian Regularizer for Slot Latents [B, T, K, D].
 
-    Maps canonical (B, T, K, D) latents to LeWM (T, B*K, D) and computes the
-    Epps-Pulley empirical characteristic function test against N(0, I).
+    Maps fixed (B, T, K, D) slot latents to (T, B*K, D) and computes the
+    Epps-Pulley empirical characteristic function test against N(0, I)
+    matching LeWM.
     """
 
     def __init__(
@@ -45,26 +46,18 @@ class SIGRegLoss(nn.Module):
         if z is None or not torch.is_tensor(z) or z.numel() == 0:
             return torch.tensor(0.0), {"sigreg_loss": 0.0}
 
-        # Fixed slot latent shape: (B, T, K, D) -> (T, B*K, D) matching LeWM
-        if z.ndim == 4:
-            B, T, K, D = z.shape
-            proj = z.float().permute(1, 0, 2, 3).reshape(T, B * K, D)
-        elif z.ndim == 3:
-            B, K, D = z.shape
-            proj = z.float().permute(1, 0, 2)  # (K, B, D)
-        elif z.ndim == 2:
-            proj = z.float().unsqueeze(0)      # (1, B, D)
-        else:
-            return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
+        # Canonical slot latents (B, T, K, D) -> (T, B*K, D) matching LeWM (T, B, D)
+        B, T, K, D = z.shape
+        proj = z.float().permute(1, 0, 2, 3).reshape(T, B * K, D)
 
         if proj.size(-2) < 2:
             return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
 
-        # 1D Random unit projections
-        A = torch.randn(proj.size(-1), self.num_proj, device=z.device)
+        # Sample random unit projections
+        A = torch.randn(D, self.num_proj, device=z.device)
         A = A / A.norm(p=2, dim=0).clamp_min(1e-8)
 
-        # Epps-Pulley empirical characteristic function test
+        # Compute Epps-Pulley empirical characteristic function statistic
         x_t = (proj @ A).unsqueeze(-1) * self.t  # (T, B*K, num_proj, knots)
         err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
         statistic = (err @ self.weights) * proj.size(-2)
