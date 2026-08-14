@@ -55,6 +55,9 @@ class StandardizedSAViWrapper(BaseModelWrapper):
         res = tuple(model_cfg.get("resolution", [64, 64]))
         clip_len = model_cfg.get("n_sample_frames", model_cfg.get("clip_len", 6))
 
+        use_encoder_bn = model_cfg.get("use_encoder_bn", model_cfg.get("use_bn", False))
+        use_residual_bn = model_cfg.get("use_residual_bn", model_cfg.get("use_bn", False))
+
         base_model = SAVi(
             resolution=res,
             clip_len=clip_len,
@@ -62,6 +65,8 @@ class StandardizedSAViWrapper(BaseModelWrapper):
             slot_dim=model_cfg.get("slot_dim", 64),
             num_iterations=model_cfg.get("num_iterations", 3),
             in_channels=model_cfg.get("in_channels", 3),
+            use_encoder_bn=use_encoder_bn,
+            use_residual_bn=use_residual_bn,
             slot_dict=model_cfg.get("slot_dict"),
             enc_dict=model_cfg.get("enc_dict"),
             dec_dict=model_cfg.get("dec_dict"),
@@ -148,6 +153,8 @@ class StandardizedDeformableSAViWrapper(StandardizedSAViWrapper):
 
         res = tuple(model_cfg.get("resolution", [64, 64]))
         clip_len = model_cfg.get("n_sample_frames", model_cfg.get("clip_len", 6))
+        use_encoder_bn = model_cfg.get("use_encoder_bn", model_cfg.get("use_bn", False))
+        use_residual_bn = model_cfg.get("use_residual_bn", model_cfg.get("use_bn", False))
 
         base_model = DeformableSAVi(
             resolution=res,
@@ -158,6 +165,8 @@ class StandardizedDeformableSAViWrapper(StandardizedSAViWrapper):
             n_heads=model_cfg.get("n_heads", 4),
             n_points=model_cfg.get("n_points", 4),
             in_channels=model_cfg.get("in_channels", 3),
+            use_encoder_bn=use_encoder_bn,
+            use_residual_bn=use_residual_bn,
             slot_dict=model_cfg.get("slot_dict"),
             enc_dict=model_cfg.get("enc_dict"),
             dec_dict=model_cfg.get("dec_dict"),

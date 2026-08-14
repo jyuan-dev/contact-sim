@@ -1,0 +1,33 @@
+# PIDM (Predictive Inverse Dynamics Model) Push-T Experiment Configuration
+exp_name: "pidm_slotformer_pusht_default_4ep"
+
+dataset:
+  load_masks: false
+
+model:
+  name: "pidm_slotformer"
+  type: "pidm_slotformer"
+  stage1_ckpt_path: "scratch/checkpoints/savi_pusht_default_4ep/savi_best.pt"
+  stage1_model_type: "savi"
+  history_len: 2
+  rollout_len: 4
+  d_model: 128
+  num_layers: 4
+  num_heads: 8
+  ffn_dim: 512
+  condition_mode: "goal_film"
+  goal_slot_idx: 2
+  raw_action_dim: 2
+  action_embed_dim: 64
+  robot_slot_idx: 0
+  rollout_consistent: true
+  slot_loss_weight: 1.0
+  action_loss_weight: 1.0
+
+batch_size: 512
+num_workers: 16
+lr: 0.0006
+weight_decay: 0.0
+epochs: 4
+val_every: 1
+seed: 42

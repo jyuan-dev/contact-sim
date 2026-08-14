@@ -21,6 +21,10 @@ slot_dict:
   num_slots: 4                # Total number of latent object slots (K = 4)
   slot_size: 64               # Vector dimensionality of each latent slot representation (D = 64)
 
+# ── Normalization Parameters ──────────────────────────────────────────────────
+use_encoder_bn: true          # Apply BatchNorm1d to encoder output features before Slot Attention
+use_residual_bn: true         # Apply BatchNorm1d to slot states at the end of each residual update
+
 # ── Latent Distribution Settings ─────────────────────────────────────────────
 loss_dict:
   kld_method: "none"          # VAE KL divergence mode: 'none' (deterministic slots), 'analytic', or 'mc'

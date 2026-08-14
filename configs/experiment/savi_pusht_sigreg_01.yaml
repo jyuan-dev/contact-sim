@@ -1,0 +1,16 @@
+# @package _global_
+
+defaults:
+  - override /model: savi
+  - override /dataset: pusht
+  - override /loss: savi_sigreg
+
+exp_name: "savi_pusht_sigreg_01"
+epochs: 4
+batch_size: 128
+lr: 2e-4
+
+loss:
+  losses:
+    sigreg:
+      weight: 0.1

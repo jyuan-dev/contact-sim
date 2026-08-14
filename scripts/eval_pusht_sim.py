@@ -68,9 +68,9 @@ def parse_args():
     parser.add_argument(
         "--goal_mode",
         type=str,
-        choices=["static", "world_model", "both"],
+        choices=["static", "world_model", "pidm", "both"],
         default="both",
-        help="Intent goal mode: 'static' (z_goal), 'world_model' (z_{t+1}), or 'both'",
+        help="Intent goal mode: 'static' (z_goal), 'world_model' (z_{t+1}), 'pidm' (goal-conditioned rollout), or 'both'",
     )
     parser.add_argument(
         "--action_scale",
@@ -253,23 +253,37 @@ def evaluate_closed_loop(
 
             if goal_mode == "static":
                 z_target = static_z_goal
-            elif goal_mode == "world_model":
+                actor = getattr(inner_model, "idm_actor", getattr(inner_model, "intact_actor", None))
+                with torch.no_grad():
+                    act_mu, _ = actor(
+                        z_curr=current_slot,
+                        z_next=z_target,
+                        prev_action=prev_action_tensor,
+                    )
+                    predicted_delta = act_mu[0].cpu().numpy()
+            elif goal_mode in ("world_model", "pidm"):
                 if len(history_slot_list) == 1:
                     z_history = torch.cat([current_slot.unsqueeze(1), current_slot.unsqueeze(1)], dim=1)
                 else:
                     z_history = torch.stack(history_slot_list, dim=1)  # [1, 2, K, D]
-                
-                with torch.no_grad():
-                    pred_next_slots = inner_model.rollouter(z_history, pred_len=1)  # [1, 1, K, D]
-                    z_target = pred_next_slots[:, 0]  # [1, K, D]
 
-            with torch.no_grad():
-                act_mu, _ = inner_model.intact_actor(
-                    z_curr=current_slot,
-                    z_next=z_target,
-                    prev_action=prev_action_tensor,
-                )
-                predicted_delta = act_mu[0].cpu().numpy()
+                actor = getattr(inner_model, "idm_actor", getattr(inner_model, "intact_actor", None))
+                with torch.no_grad():
+                    if hasattr(inner_model, "plan_action"):
+                        act_mu = inner_model.plan_action(
+                            history_video_or_slots=z_history,
+                            goal_video_or_slots=static_z_goal,
+                            prev_action=prev_action_tensor,
+                        )
+                    else:
+                        pred_next_slots = inner_model.rollouter(z_history, pred_len=1)  # [1, 1, K, D]
+                        z_target = pred_next_slots[:, 0]  # [1, K, D]
+                        act_mu, _ = actor(
+                            z_curr=current_slot,
+                            z_next=z_target,
+                            prev_action=prev_action_tensor,
+                        )
+                    predicted_delta = act_mu[0].cpu().numpy()
 
             prev_action_tensor = act_mu
 

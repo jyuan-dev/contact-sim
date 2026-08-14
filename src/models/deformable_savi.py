@@ -123,7 +123,7 @@ class DeformableSlotAttention(nn.Module):
     """
 
     def __init__(self, num_slots=4, slot_dim=64, num_iterations=3,
-                 n_heads=4, n_points=4, n_levels=1, eps=1e-8):
+                 n_heads=4, n_points=4, n_levels=1, eps=1e-8, use_residual_bn: bool = False):
         super().__init__()
         self.num_slots = num_slots
         self.slot_dim = slot_dim
@@ -132,6 +132,7 @@ class DeformableSlotAttention(nn.Module):
         self.n_points = n_points
         self.n_levels = n_levels
         self.eps = eps
+        self.use_residual_bn = use_residual_bn
 
         self.norm_inputs = nn.LayerNorm(slot_dim)
         self.norm_slots = nn.LayerNorm(slot_dim)
@@ -150,6 +151,10 @@ class DeformableSlotAttention(nn.Module):
             nn.Linear(slot_dim, slot_dim * 2), nn.ReLU(inplace=True),
             nn.Linear(slot_dim * 2, slot_dim))
         self.norm_mlp = nn.LayerNorm(slot_dim)
+        if self.use_residual_bn:
+            self.residual_bn = nn.BatchNorm1d(slot_dim)
+        else:
+            self.residual_bn = None
 
         self._reset_parameters()
 
@@ -186,6 +191,8 @@ class DeformableSlotAttention(nn.Module):
 
             slots = self.gru(updates.reshape(B * K, D), slots.reshape(B * K, D)).reshape(B, K, D)
             slots = slots + self.mlp(self.norm_mlp(slots))
+            if self.residual_bn is not None:
+                slots = self.residual_bn(slots.view(B * K, D)).view(B, K, D)
 
         return slots, ref_points
 
@@ -212,6 +219,8 @@ class DeformableSAVi(SAVi):
         n_heads=4,
         n_points=4,
         in_channels=3,
+        use_encoder_bn: bool = False,
+        use_residual_bn: bool = False,
         **kwargs,
     ):
         super().__init__(
@@ -221,6 +230,8 @@ class DeformableSAVi(SAVi):
             slot_dim=slot_dim,
             num_iterations=num_iterations,
             in_channels=in_channels,
+            use_encoder_bn=use_encoder_bn,
+            use_residual_bn=use_residual_bn,
             **kwargs,
         )
 
@@ -231,6 +242,7 @@ class DeformableSAVi(SAVi):
             num_iterations=num_iterations,
             n_heads=n_heads,
             n_points=n_points,
+            use_residual_bn=self.use_residual_bn,
         )
 
         class _DeformableSlotAttentionWrapper(nn.Module):

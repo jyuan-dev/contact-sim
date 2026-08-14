@@ -13,4 +13,4 @@ defaults:
 losses:
   sigreg:
     _target_: src.losses.sigreg.SIGRegLoss                 # Atomic loss term for isotropic Gaussian latent regularization
-    weight: 0.001                                           # Loss weighting coefficient for SIGReg term (prevents latent collapse)
+    weight: 0.1                                           # Loss weighting coefficient for SIGReg term (prevents latent collapse)

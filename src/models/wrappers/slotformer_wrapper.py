@@ -22,13 +22,14 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.p
     "slotformer", "slot_former", "ocvp_slotformer", "ocvp-slotformer",
     "factorized_slotformer", "cocvp_slotformer", "cocvp-slotformer",
     "cocvp_slotformer_film", "cocvp_slotformer_sum", "cocvp_slotformer_concat",
-    "intact_slotformer", "intact_ocvp_slotformer", "ocvp_intact_slotformer"
+    "intact_slotformer", "intact_ocvp_slotformer", "ocvp_intact_slotformer",
+    "pidm", "pidm_slotformer", "pidm-slotformer", "pidm_pusht",
 ])
 class StandardizedSlotFormerWrapper(BaseModelWrapper):
     """
     SlotFormer Stage 2 wrapper conforming to ``BaseModelWrapper``.
     Supports standard SlotFormer, OCVP Factorized, Action-Conditioned (cOCVP),
-    and INTACT RobotSlotIntentActionActor variants.
+    INTACT RobotSlotIntentActionActor, and PIDM (Predictive Inverse Dynamics Model) variants.
     """
 
     def __init__(
@@ -46,6 +47,7 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
     def build(cls, model_cfg: dict) -> "StandardizedSlotFormerWrapper":
         """Construct from model config sub-dict."""
         from src.models.slotformer import SlotFormerModel
+        from src.models.pidm import PIDMModel
 
         stage1_ckpt_path = model_cfg.get("stage1_ckpt_path", "scratch/checkpoints/savi_pusht/savi_best.pt")
         if stage1_ckpt_path and not os.path.isabs(stage1_ckpt_path):
@@ -87,6 +89,40 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         use_img_recon_loss = model_cfg.get("use_img_recon_loss", False)
 
         model_type_str = str(model_cfg.get("type", model_cfg.get("name", ""))).lower()
+
+        if "pidm" in model_type_str:
+            condition_mode = model_cfg.get("condition_mode", "goal_film")
+            goal_slot_idx = model_cfg.get("goal_slot_idx", 2)
+            raw_action_dim = model_cfg.get("raw_action_dim", model_cfg.get("action_dim", 2))
+            action_embed_dim = model_cfg.get("action_embed_dim", model_cfg.get("action_emb_dim", 64))
+            action_loss_weight = model_cfg.get("action_loss_weight", 1.0)
+            slot_loss_weight = model_cfg.get("slot_loss_weight", 1.0)
+            robot_slot_idx = model_cfg.get("robot_slot_idx", 0)
+            rollout_consistent = model_cfg.get("rollout_consistent", True)
+
+            inner_model = PIDMModel(
+                stage1_model=stage1_wrapper,
+                history_len=history_len,
+                rollout_len=rollout_len,
+                d_model=d_model,
+                num_layers=num_layers,
+                num_heads=num_heads,
+                ffn_dim=ffn_dim,
+                t_pe=t_pe,
+                slots_pe=slots_pe,
+                loss_decay_factor=loss_decay_factor,
+                use_img_recon_loss=use_img_recon_loss,
+                condition_mode=condition_mode,
+                goal_slot_idx=goal_slot_idx,
+                raw_action_dim=raw_action_dim,
+                action_embed_dim=action_embed_dim,
+                action_loss_weight=action_loss_weight,
+                slot_loss_weight=slot_loss_weight,
+                robot_slot_idx=robot_slot_idx,
+                rollout_consistent=rollout_consistent,
+            )
+            return cls(inner_model, resolution=res)
+
         default_rollouter_type = "cocvp" if "cocvp" in model_type_str else (
             "ocvp" if "ocvp" in model_type_str or "factorized" in model_type_str else "standard"
         )

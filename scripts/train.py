@@ -83,6 +83,10 @@ def main(cfg: DictConfig) -> None:
     print(f"Checkpoint Directory: {ckpt_dir}")
 
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     # ── 1. Build Model ────────────────────────────────────────────────────
     model = build_model(cfg_dict).to(device)
