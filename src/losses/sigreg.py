@@ -3,9 +3,6 @@ SIGReg (Sketched Isotropic Gaussian Regularization) — aligned with Le-WorldMod
 
 Ref: Garrido, Balestriero et al., "Learning to Act without Actions" (Le-WM, 2024).
      https://le-wm.github.io/
-
-Uses Cramér-Wold random 1-D projections and the Epps-Pulley empirical
-characteristic function (ECF) test against N(0, I) to prevent latent collapse.
 """
 
 import torch
@@ -14,10 +11,10 @@ import torch.nn as nn
 
 class SIGRegLoss(nn.Module):
     """
-    Sketched Isotropic Gaussian Regularizer (Le-WM).
+    Sketched Isotropic Gaussian Regularizer for Slot Latents [B, T, K, D].
 
-    Evaluates the Epps-Pulley empirical characteristic function test
-    against standard normal N(0, I) over random unit projections.
+    Maps canonical (B, T, K, D) latents to LeWM (T, B*K, D) and computes the
+    Epps-Pulley empirical characteristic function test against N(0, I).
     """
 
     def __init__(
@@ -41,33 +38,34 @@ class SIGRegLoss(nn.Module):
 
     def forward(self, out, batch=None):
         if isinstance(out, dict):
-            z = out.get("post_slots", out.get("slots", out.get("z", out.get("latents"))))
+            z = out.get("post_slots", out.get("slots", out.get("z")))
         else:
             z = out
 
         if z is None or not torch.is_tensor(z) or z.numel() == 0:
             return torch.tensor(0.0), {"sigreg_loss": 0.0}
 
-        # Canonical slot latents (B, T, K, D) -> (T, B*K, D) matching LeWM (T, B, D)
-        z = z.float()
+        # Fixed slot latent shape: (B, T, K, D) -> (T, B*K, D) matching LeWM
         if z.ndim == 4:
             B, T, K, D = z.shape
-            proj = z.permute(1, 0, 2, 3).reshape(T, B * K, D)
+            proj = z.float().permute(1, 0, 2, 3).reshape(T, B * K, D)
         elif z.ndim == 3:
-            # (B, K, D) -> treat K as sequences, B as batch
-            proj = z.permute(1, 0, 2)
+            B, K, D = z.shape
+            proj = z.float().permute(1, 0, 2)  # (K, B, D)
+        elif z.ndim == 2:
+            proj = z.float().unsqueeze(0)      # (1, B, D)
         else:
-            proj = z.unsqueeze(0)
+            return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
 
         if proj.size(-2) < 2:
             return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
 
-        # Sample random projections
-        A = torch.randn(proj.size(-1), self.num_proj, device=proj.device)
+        # 1D Random unit projections
+        A = torch.randn(proj.size(-1), self.num_proj, device=z.device)
         A = A / A.norm(p=2, dim=0).clamp_min(1e-8)
 
-        # Compute the Epps-Pulley empirical characteristic function statistic
-        x_t = (proj @ A).unsqueeze(-1) * self.t
+        # Epps-Pulley empirical characteristic function test
+        x_t = (proj @ A).unsqueeze(-1) * self.t  # (T, B*K, num_proj, knots)
         err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
         statistic = (err @ self.weights) * proj.size(-2)
 
