@@ -35,9 +35,14 @@ class SIGRegLoss(nn.Module):
         weights = torch.full((knots,), 2 * dt, dtype=torch.float32)
         weights[[0, -1]] = dt
         window = torch.exp(-t.square() / 2.0)
-        self.register_buffer("t", t)
-        self.register_buffer("phi", window)
-        self.register_buffer("weights", weights * window)
+        # persistent=False: deterministic quadrature constants, excluded from
+        # state_dict(). Otherwise the wrapper's state_dict gains loss-buffer
+        # keys that train.py's _save_checkpoint (inner-model state) never
+        # saves, and load_checkpoint_state's strict key check rejects the
+        # checkpoint as "missing" those keys.
+        self.register_buffer("t", t, persistent=False)
+        self.register_buffer("phi", window, persistent=False)
+        self.register_buffer("weights", weights * window, persistent=False)
 
     def forward(self, out, batch=None):
         if isinstance(out, dict):
