@@ -223,6 +223,8 @@ class TestLosses(unittest.TestCase):
         self.assertEqual(weighted.ndim, 0)
         self.assertIsInstance(info, dict)
         self.assertIn("sigreg_loss", info)
+        self.assertIn("sigreg_slot0", info)
+        self.assertIn("sigreg_slot3", info)
         self.assertGreater(info["sigreg_loss"], 0.0)
 
     def test_composite_loss_aggregation(self):

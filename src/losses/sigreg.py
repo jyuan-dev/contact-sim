@@ -3,6 +3,9 @@ SIGReg (Sketched Isotropic Gaussian Regularization) — aligned with Le-WorldMod
 
 Ref: Garrido, Balestriero et al., "Learning to Act without Actions" (Le-WM, 2024).
      https://le-wm.github.io/
+
+Evaluates Cramér-Wold random 1-D projections and the Epps-Pulley empirical
+characteristic function (ECF) test against N(0, I) per slot independently.
 """
 
 import torch
@@ -13,9 +16,8 @@ class SIGRegLoss(nn.Module):
     """
     Sketched Isotropic Gaussian Regularizer for Slot Latents [B, T, K, D].
 
-    Maps fixed (B, T, K, D) slot latents to (T, B*K, D) and computes the
-    Epps-Pulley empirical characteristic function test against N(0, I)
-    matching LeWM.
+    Maps slot latents (B, T, K, D) -> (K, T, B, D), keeping each slot's
+    distribution independent while applying LeWM's ECF test across batch B.
     """
 
     def __init__(
@@ -46,11 +48,11 @@ class SIGRegLoss(nn.Module):
         if z is None or not torch.is_tensor(z) or z.numel() == 0:
             return torch.tensor(0.0), {"sigreg_loss": 0.0}
 
-        # Canonical slot latents (B, T, K, D) -> (T, B*K, D) matching LeWM (T, B, D)
+        # Canonical slot latents (B, T, K, D) -> (K, T, B, D)
         B, T, K, D = z.shape
-        proj = z.float().permute(1, 0, 2, 3).reshape(T, B * K, D)
+        proj = z.float().permute(2, 1, 0, 3)  # (K, T, B, D)
 
-        if proj.size(-2) < 2:
+        if B < 2:
             return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
 
         # Sample random unit projections
@@ -58,13 +60,20 @@ class SIGRegLoss(nn.Module):
         A = A / A.norm(p=2, dim=0).clamp_min(1e-8)
 
         # Compute Epps-Pulley empirical characteristic function statistic
-        x_t = (proj @ A).unsqueeze(-1) * self.t  # (T, B*K, num_proj, knots)
-        err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
-        statistic = (err @ self.weights) * proj.size(-2)
+        x_t = (proj @ A).unsqueeze(-1) * self.t  # (K, T, B, num_proj, knots)
+        err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()  # (K, T, num_proj, knots)
+        statistic = (err @ self.weights) * B  # (K, T, num_proj)
 
-        raw_loss = statistic.mean()
+        per_slot = statistic.mean(dim=(-2, -1))  # (K,) - average over time T and projections
+        raw_loss = per_slot.mean()
         if torch.isnan(raw_loss) or torch.isinf(raw_loss):
             return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
 
         weighted_loss = self.weight * raw_loss
-        return weighted_loss, {"sigreg_loss": raw_loss.item()}
+
+        # Per-slot diagnostic breakdown
+        info = {"sigreg_loss": raw_loss.item()}
+        for k in range(K):
+            info[f"sigreg_slot{k}"] = per_slot[k].item()
+
+        return weighted_loss, info
