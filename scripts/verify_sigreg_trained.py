@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import os
+import random
 import sys
 
 import torch
@@ -41,7 +42,7 @@ def compute_sigreg(slots, num_proj, knots=17, t_max=3.0, n_calls=3):
 
 
 def extract_slots(model, loader, num_batches, device):
-    """Run the wrapper forward over the first `num_batches` batches, collect post_slots."""
+    """Run the wrapper forward over `num_batches` batches, collect post_slots."""
     model.eval()
     collected = []
     with torch.no_grad():
@@ -85,14 +86,21 @@ def main():
     ds_cfg = dict(cfg_dict["dataset"])
     print(f"Dataset: {ds_cfg.get('name')} ({ds_cfg.get('h5_path')})")
 
+    # NOTE: sample RANDOM clips (seeded) instead of the first N in dataset
+    # order — the HDF5 is episode-ordered, so the leading clips are a biased
+    # subset and give systematically different (worse) latent statistics.
+    rng = random.Random(42)
     splits = {}
     for split in ("train", "val"):
         try:
             ds = build_dataset(ds_cfg, split=split)
-            loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
+            n = args.num_batches * args.batch_size
+            idx = rng.sample(range(len(ds)), min(n, len(ds)))
+            subset = torch.utils.data.Subset(ds, idx)
+            loader = DataLoader(subset, batch_size=args.batch_size, shuffle=False,
                                 num_workers=2, pin_memory=True)
             splits[split] = loader
-            print(f"  {split}: {len(ds)} clips")
+            print(f"  {split}: {len(ds)} clips (sampled {len(idx)} randomly)")
         except Exception as e:
             print(f"  [WARN] split '{split}' unavailable: {e}")
 
