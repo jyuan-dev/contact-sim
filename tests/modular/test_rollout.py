@@ -89,18 +89,17 @@ class TestPredictSlotRollout(unittest.TestCase):
         """Wrapper-of-model with rollouter + stage1: rollout frames come from the rollouter."""
         wrapper = _make_savi_wrapper()
 
+        class _Stage2Container:
+            def __init__(self, inner):
+                self.model = inner
+
         class _FakeInner(nn.Module):
             def __init__(self, stage1):
                 super().__init__()
                 self.rollouter = _FakeRollouter(K=2, D=32)
                 self.stage1_model = stage1
 
-        class _Stage2Wrapper(nn.Module):
-            def __init__(self, inner):
-                super().__init__()
-                self.model = inner
-
-        container = _Stage2Wrapper(_FakeInner(wrapper))
+        container = _Stage2Container(_FakeInner(wrapper))
         out = predict_slot_rollout(container, _video(), n_cond_frames=2)
 
         # Rollout frames (t >= 2) come from the fake rollouter -> zeros

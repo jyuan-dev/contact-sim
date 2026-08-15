@@ -15,10 +15,8 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typeguard import typechecked
-from torchtyping import TensorType, patch_typeguard
 
-patch_typeguard()
+from src.utils.tensor_checks import check_tensor_shape
 
 
 class RobotSlotIntentActionActor(nn.Module):
@@ -93,11 +91,10 @@ class RobotSlotIntentActionActor(nn.Module):
         actor_layers.append(nn.Linear(hidden_dim, 2 * action_dim))
         self.actor_net = nn.Sequential(*actor_layers)
 
-    @typechecked
     def extract_features(
         self,
-        z_curr: TensorType["B", "K", "D"],
-        z_next: TensorType["B", "K", "D"],
+        z_curr: torch.Tensor,
+        z_next: torch.Tensor,
         prev_action: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
@@ -109,14 +106,13 @@ class RobotSlotIntentActionActor(nn.Module):
         Returns:
             Concatenated actor feature vector [B, hidden_dim + action_emb_dim]
         """
-        # Same-named dims (B, K, D) are cross-checked between z_curr and
-        # z_next by the annotations; prev_action's batch relation stays inline.
+        check_tensor_shape(z_curr, "z_curr", ndim=3)
+        check_tensor_shape(z_next, "z_next", ndim=3)
+        if z_curr.shape != z_next.shape:
+            raise ValueError(f"z_curr and z_next must have same shape, got {z_curr.shape} and {z_next.shape}")
         if prev_action is not None:
-            if not torch.is_tensor(prev_action) or prev_action.ndim != 2 \
-                    or prev_action.shape[0] != z_curr.shape[0]:
-                raise ValueError(
-                    f"prev_action must be a [B={z_curr.shape[0]}, A] tensor, "
-                    f"got shape {getattr(prev_action, 'shape', None)}")
+            check_tensor_shape(prev_action, "prev_action", ndim=2,
+                               shape=(z_curr.shape[0], None))
 
         intent = z_next - z_curr  # [B, K, D]
         grammar = torch.cat([z_curr, intent, z_curr * intent], dim=-1)  # [B, K, 3D]

@@ -48,9 +48,8 @@ class TestRobotSlotIntentActionActor(unittest.TestCase):
         self.assertEqual(tuple(feat.shape), (3, 32))  # hidden only
 
     def test_shape_mismatch_raises(self):
-        """Same-named dims are cross-checked by the annotations."""
         actor = self._make()
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ValueError):
             actor.extract_features(torch.randn(3, 4, 16), torch.randn(3, 5, 16))
 
     def test_action_nll(self):
