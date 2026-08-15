@@ -20,12 +20,15 @@
 # ==============================================================================
 
 # ── 1. Hydra Defaults Composition Group ──────────────────────────────────────
+# NOTE: `_self_` comes FIRST so this file's top-level keys are pure defaults:
+# group configs (model/dataset/loss) and experiment configs override them.
+# (Previously `_self_` was last, which silently shadowed experiment files.)
 defaults:
+  - _self_                     # Keys in this file are the lowest-precedence defaults
   - model: savi                # Model config from configs/model/
   - dataset: pusht             # Dataset config from configs/dataset/ ('pusht' or 'gridshapes')
   - loss: savi_default         # Loss composition config from configs/loss/ ('savi_default', 'savi_sigreg', 'savi_contrastive')
   - optional experiment: null  # Optional experiment override from configs/experiment/ (e.g. 'savi_pusht')
-  - _self_                     # Enables keys in this file to override values inherited from defaults
 
 # ── 2. Experiment Identification & Reproducibility ───────────────────────────
 exp_name: ${model.name}_${dataset.name} # Dynamic string defining experiment directory name under scratch/checkpoints/

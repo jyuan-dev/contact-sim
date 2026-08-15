@@ -81,15 +81,16 @@ class TestBootstrapCheckpoint(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             bootstrap_checkpoint("/nonexistent/path/model.pt")
 
-    def test_parse_error_raises_runtime_error(self):
+    def test_parse_error_raises_config_error(self):
         from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
+        from src.config.run_config import ConfigError
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "config.yaml"), "w") as f:
                 f.write("model: [unclosed")
             ckpt_path = self._write_checkpoint(tmpdir)
 
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(ConfigError):
                 bootstrap_checkpoint(ckpt_path)
 
     def test_missing_config_sniffs_slotformer(self):

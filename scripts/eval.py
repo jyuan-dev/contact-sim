@@ -6,13 +6,13 @@ Usage Examples:
   python scripts/eval.py model=savi ckpt_path=scratch/checkpoints/savi_pusht/savi_best.pt
 """
 
+import argparse
+import json
 import os
 import sys
-import json
 import time
+
 import torch
-import hydra
-from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +25,7 @@ from src.metrics import DeterministicEvaluator
 from src.utils.training_utils import load_checkpoint_state
 from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
 from src.utils.data_utils import find_dataset_path
+from src.config.run_config import ConfigError
 
 
 def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch_size=64, device='cpu', h5_path=None, train_frac=0.8):
@@ -186,35 +187,59 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
     return res
 
 
-@hydra.main(config_path="../configs", config_name="config")
-def main(cfg: DictConfig):
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    device_name = cfg.get('device', 'cpu')
-    device = torch.device(device_name if torch.cuda.is_available() and device_name != 'cpu' else 'cpu')
+_EVAL_KEYS = ("mode", "clips_per_ep", "batch_size", "device", "seed")
 
-    ckpt_path = cfg.get('ckpt_path', None) or cfg.get('ckpt', None)
-    if ckpt_path and not os.path.isabs(ckpt_path):
-        ckpt_path = os.path.join(REPO_ROOT, ckpt_path)
 
-    if not ckpt_path or not os.path.exists(ckpt_path):
-        print(f"Error: Invalid or missing checkpoint path: '{ckpt_path}'")
+def _parse_eval_args(argv) -> argparse.Namespace:
+    """Small shim replacing Hydra for eval: --flag value and key=value forms.
+
+    The experiment itself comes from the checkpoint's saved snapshot
+    (bootstrap_checkpoint); these flags only override eval-time knobs.
+    """
+    parser = argparse.ArgumentParser(description="Deterministic evaluation from a checkpoint.")
+    parser.add_argument("--ckpt_path", "-c", type=str, default=None)
+    parser.add_argument("--mode", type=str, default=None)
+    parser.add_argument("--clips_per_ep", type=int, default=None)
+    parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    args, unknown = parser.parse_known_args(argv)
+    for token in unknown:
+        if "=" not in token:
+            raise ConfigError(f"Unknown argument '{token}' "
+                              f"(use --flag value or key=value)")
+        key, value = token.split("=", 1)
+        if key in ("ckpt_path", "ckpt"):
+            args.ckpt_path = value
+        elif key in _EVAL_KEYS:
+            setattr(args, key, value)
+        else:
+            raise ConfigError(f"Unknown eval argument '{key}' "
+                              f"(known: ckpt_path, {', '.join(_EVAL_KEYS)})")
+    return args
+
+
+def main(argv=None):
+    args = _parse_eval_args(sys.argv[1:] if argv is None else argv)
+    if not args.ckpt_path:
+        print("Error: no checkpoint given — pass --ckpt_path <path> (or ckpt_path=<path>)")
         sys.exit(1)
 
-    # ── Reconstruct the experiment from the checkpoint ───────────────────────
-    # Preserve user CLI execution overrides (device, batch_size, etc.)
-    cli_keys = ['device', 'batch_size', 'ckpt_path', 'ckpt', 'seed', 'clips_per_ep', 'mode']
-    model, cfg_dict = bootstrap_checkpoint(
-        ckpt_path, cli_overrides={k: cfg_dict[k] for k in cli_keys if k in cfg_dict})
-    model = model.to(device)
-    load_checkpoint_state(model, ckpt_path, device=device)
+    # ── Reconstruct the experiment from the checkpoint snapshot ─────────────
+    overrides = {k: getattr(args, k) for k in _EVAL_KEYS if getattr(args, k) is not None}
+    model, cfg_dict = bootstrap_checkpoint(args.ckpt_path, cli_overrides=overrides)
 
-    eval_mode = str(cfg.get('mode', 'deterministic')).lower()
-    if eval_mode in ('deterministic', 'full', 'full_val'):
-        base_seed = int(cfg.get('seed', 42))
-        clips_per_ep = int(cfg.get('clips_per_ep', 2))
-        batch_size = int(cfg.get('batch_size', 64))
-        train_frac = float(cfg_dict.get('dataset', {}).get('train_frac', 0.8))
-        run_deterministic_eval(model, ckpt_path, base_seed=base_seed, clips_per_ep=clips_per_ep,
+    device_name = args.device or cfg_dict.get("device", "cpu")
+    device = torch.device(device_name if torch.cuda.is_available() and device_name != "cpu" else "cpu")
+    load_checkpoint_state(model, args.ckpt_path, device=device)
+
+    eval_mode = str(args.mode or cfg_dict.get("mode", "deterministic")).lower()
+    if eval_mode in ("deterministic", "full", "full_val"):
+        base_seed = int(args.seed if args.seed is not None else cfg_dict.get("seed", 42))
+        clips_per_ep = int(args.clips_per_ep if args.clips_per_ep is not None else cfg_dict.get("clips_per_ep", 2))
+        batch_size = int(args.batch_size if args.batch_size is not None else cfg_dict.get("batch_size", 64))
+        train_frac = float(cfg_dict.get("dataset", {}).get("train_frac", 0.8))
+        run_deterministic_eval(model, args.ckpt_path, base_seed=base_seed, clips_per_ep=clips_per_ep,
                                batch_size=batch_size, device=device, train_frac=train_frac)
     else:
         # The former visualize branch evaluated zero-filled masks and rendered

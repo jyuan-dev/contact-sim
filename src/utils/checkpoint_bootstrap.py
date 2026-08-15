@@ -15,28 +15,10 @@ import os
 from typing import Any
 
 import torch
-from omegaconf import OmegaConf
-
+from src.config.run_config import RunConfig, load_snapshot
 from src.models.factory import build_model
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-def _discover_config(ckpt_dir: str, ckpt_path: str) -> Any:
-    """Load the saved training config; None if neither candidate exists."""
-    candidates = [
-        os.path.join(ckpt_dir, "config.yaml"),
-        os.path.join(ckpt_dir, ".hydra", "config.yaml"),
-    ]
-    for cand in candidates:
-        if os.path.exists(cand):
-            try:
-                saved_cfg = OmegaConf.load(cand)
-                print(f"[bootstrap] Loaded training configuration from: {cand}")
-                return saved_cfg
-            except Exception as e:
-                raise RuntimeError(f"Failed to load training config file from '{cand}': {e}") from e
-    return None
 
 
 def sniff_slotformer_arch(state_dict) -> dict:
@@ -81,10 +63,10 @@ def bootstrap_checkpoint(ckpt_path: str, cli_overrides: dict | None = None) -> t
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
     ckpt_dir = os.path.dirname(ckpt_path)
-    saved_cfg = _discover_config(ckpt_dir, ckpt_path)
+    run_cfg = load_snapshot(ckpt_dir)
 
-    if saved_cfg is not None:
-        cfg_dict = OmegaConf.to_container(saved_cfg, resolve=True)
+    if run_cfg is not None:
+        cfg_dict = run_cfg.to_dict()
     else:
         ckpt = torch.load(ckpt_path, map_location="cpu")
         arch = sniff_slotformer_arch(ckpt.get("model_state", ckpt))
@@ -100,11 +82,11 @@ def bootstrap_checkpoint(ckpt_path: str, cli_overrides: dict | None = None) -> t
             }
         }
 
-    assert isinstance(cfg_dict, dict)
-
     if cli_overrides:
-        for key, value in cli_overrides.items():
-            cfg_dict[key] = value
+        # Dotted-path overrides (device, batch_size, dataset.train_frac, ...)
+        # applied through the validated config seam.
+        cfg_dict = RunConfig.from_dict(cfg_dict, permissive=True) \
+            .apply_overrides(cli_overrides).to_dict()
 
     model = build_model(cfg_dict)
     return model, cfg_dict

@@ -20,8 +20,9 @@ if REPO_ROOT not in sys.path:
 
 from src.models.factory import build_model
 from src.datasets.factory import build_dataloader
-from src.training import BaseTrainer, TrainConfig, run_training
+from src.training import BaseTrainer, run_training
 from src.utils.training_utils import set_seed, load_checkpoint_state, save_checkpoint
+from src.config.run_config import RunConfig, assert_resume_compatible, load_snapshot
 
 
 def _auto_dvc_commit(best_path: str) -> None:
@@ -52,10 +53,15 @@ def _auto_dvc_commit(best_path: str) -> None:
 
 @hydra.main(config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
-    set_seed(cfg.seed)
+    # ── Resolve + validate through the config seam (RunConfig) ─────────────
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    run_cfg = RunConfig.from_dict(cfg_dict)
+    cfg_dict = run_cfg.to_dict()  # canonicalized (slot_dict derived, etc.)
+    train = run_cfg.train
 
-    ckpt_dir = os.path.join(REPO_ROOT, "scratch", "checkpoints", cfg.exp_name)
+    set_seed(train.seed)
+
+    ckpt_dir = run_cfg.exp_dir
     # Under --multirun / sweeps, each trial must get its own checkpoint dir —
     # otherwise trials overwrite each other's config snapshots and weights.
     job_id = os.environ.get("HYDRA_JOB_ID")
@@ -67,18 +73,16 @@ def main(cfg: DictConfig) -> None:
     # runs — they must not clobber the saved-config contract of an existing
     # checkpoint dir (checkpoint loading depends on this file matching the
     # saved weights).
-    if not cfg.get("dry_run", False):
-        config_save_path = os.path.join(ckpt_dir, "config.yaml")
-        with open(config_save_path, "w") as f:
-            f.write(OmegaConf.to_yaml(cfg, resolve=True))
+    if not train.dry_run:
+        run_cfg.save_snapshot(os.path.join(ckpt_dir, "config.yaml"))
 
     print("=" * 70)
-    print(f"            Hydra Baseline Trainer ({cfg.model.name} / {cfg.dataset.name})")
+    print(f"            Hydra Baseline Trainer ({run_cfg.model.name} / {run_cfg.dataset.name})")
     print("=" * 70)
-    print(f"Device:               {cfg.device}")
+    print(f"Device:               {train.device}")
     print(f"Checkpoint Directory: {ckpt_dir}")
 
-    device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+    device = torch.device(train.device if torch.cuda.is_available() else "cpu")
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -86,14 +90,19 @@ def main(cfg: DictConfig) -> None:
 
     # ── 1. Build Model ────────────────────────────────────────────────────
     model = build_model(cfg_dict).to(device)
-    model_name = cfg.model.name
+    model_name = run_cfg.model.name
 
     # ── Option: Resume from checkpoint if specified ───────────────────────
-    if cfg.ckpt_path is not None:
-        ckpt_path = cfg.ckpt_path
+    if train.ckpt_path is not None:
+        ckpt_path = train.ckpt_path
         if not os.path.isabs(ckpt_path):
             # Hydra chdirs into outputs/ at runtime — resolve against the repo root.
             ckpt_path = os.path.join(REPO_ROOT, ckpt_path)
+        # Topology check before weight loading: the checkpoint's snapshot must
+        # be able to hold the live config's weights.
+        snapshot = load_snapshot(os.path.dirname(ckpt_path))
+        if snapshot is not None:
+            assert_resume_compatible(snapshot, run_cfg)
         load_checkpoint_state(model, ckpt_path, device=device)
 
     # ── 2. Build DataLoaders ──────────────────────────────────────────────
@@ -101,10 +110,11 @@ def main(cfg: DictConfig) -> None:
     val_loader = build_dataloader(cfg_dict, split="val")
 
     # ── 3. Build Trainer (loss is injected by build_model via the factory) ──
-    trainer = BaseTrainer(save_dir=ckpt_dir, experiment_name=cfg.exp_name, use_wandb=cfg.get("use_wandb", False), cfg_dict=cfg_dict)
+    trainer = BaseTrainer(save_dir=ckpt_dir, experiment_name=train.exp_name,
+                          use_wandb=train.use_wandb, cfg_dict=cfg_dict)
 
     # ── 4. Build Optimizer & Scaler ───────────────────────────────────────
-    train_cfg = TrainConfig.from_cfg(cfg_dict, ckpt_dir=ckpt_dir, model_name=model_name)
+    train_cfg = run_cfg.as_train_config(ckpt_dir=ckpt_dir, model_name=model_name)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=train_cfg.lr,
@@ -130,7 +140,7 @@ def main(cfg: DictConfig) -> None:
     print("Training finished successfully!")
 
     # ── Auto DVC tracking & commit ────────────────────────────────────────
-    if cfg.get("auto_dvc", True):
+    if train.auto_dvc:
         best_path = os.path.join(ckpt_dir, f"{model_name}_best.pt")
         _auto_dvc_commit(best_path)
 
