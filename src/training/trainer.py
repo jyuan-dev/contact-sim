@@ -3,10 +3,23 @@ Base Trainer class encapsulating TensorBoard logging, file logging, checkpoint s
 """
 
 import os
+import subprocess
 import sys
-import torch
 from typing import Optional
+
+import torch
 from torch.utils.tensorboard import SummaryWriter  # type: ignore[reportPrivateImportUsage]
+
+
+def _git_commit() -> Optional[str]:
+    """Short git commit hash of the working tree, or None outside a repo."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5)
+        return result.stdout.strip() or None
+    except Exception:
+        return None
 
 class TeeLogger:
     """
@@ -78,6 +91,14 @@ class BaseTrainer:
                     config=cfg_dict,
                     dir=save_dir,
                 )
+                # Pin run metadata so every run row carries its exact
+                # reproduction recipe (resolved config is already in
+                # `config`; add code/environment fingerprints).
+                self.wandb_run.config.update({
+                    "git_commit": _git_commit(),
+                    "conda_env": os.environ.get("CONDA_DEFAULT_ENV"),
+                    "python_version": sys.version.split()[0],
+                })
                 print(f"[{self.experiment_name}] WandB initialized: {self.wandb_run.url}", flush=True)
             except Exception as e:
                 print(f"[{self.experiment_name}] Warning: Failed to initialize WandB ({e}). Continuing with TensorBoard only.", flush=True)

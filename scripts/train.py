@@ -56,6 +56,11 @@ def main(cfg: DictConfig) -> None:
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
     ckpt_dir = os.path.join(REPO_ROOT, "scratch", "checkpoints", cfg.exp_name)
+    # Under --multirun / sweeps, each trial must get its own checkpoint dir —
+    # otherwise trials overwrite each other's config snapshots and weights.
+    job_id = os.environ.get("HYDRA_JOB_ID")
+    if job_id:
+        ckpt_dir = f"{ckpt_dir}_trial_{job_id}"
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # Save resolved config snapshot to checkpoint directory. Skipped on dry

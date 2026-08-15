@@ -1,0 +1,24 @@
+# @package _global_
+#
+# Example Optuna sweep over the sigreg 0.01 experiment.
+#
+# Run with:
+#   python scripts/train.py -m experiment=savi_pusht_3slots_sigreg_001_sweep
+#
+# Each trial gets its own checkpoint dir via the job-num suffix.
+
+defaults:
+  - /experiment/savi_pusht_3slots_sigreg_001
+  - override /hydra/sweeper: optuna
+
+# (Per-trial checkpoint isolation is handled by train.py itself: under
+# --multirun it appends the Hydra job id to the checkpoint dir, so no
+# exp_name templating is needed here.)
+hydra:
+  sweeper:
+    n_trials: 20
+    n_jobs: 1
+    direction: minimize
+    params:
+      lr: choice(0.0001, 0.0002, 0.0004)
+      loss.losses.sigreg.weight: tag(log, interval(0.0005, 0.05))
