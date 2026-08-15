@@ -25,8 +25,10 @@ extract_slots rely on: ``encode``, ``decode``, ``_get_encoder_out``,
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typeguard import typechecked
+from torchtyping import TensorType, patch_typeguard
 
-from src.utils.tensor_checks import check_tensor_shape
+patch_typeguard()
 
 
 # ── CNN / shape helpers ───────────────────────────────────────────────────────
@@ -139,11 +141,11 @@ class SlotAttention(nn.Module):
         )
         self.residual_bn = nn.BatchNorm1d(self.slot_size) if use_residual_bn else None
 
-    def forward(self, inputs: torch.Tensor, slots: torch.Tensor) -> torch.Tensor:
+    @typechecked
+    def forward(self, inputs: TensorType["B", "N", "C"],
+                slots: TensorType["B", "K", "C"]) -> torch.Tensor:
         """`inputs`: [B, N, C] flattened per-pixel features,
         `slots`: [B, num_slots, C] slot inits."""
-        check_tensor_shape(inputs, "inputs", ndim=3)
-        check_tensor_shape(slots, "slots", ndim=3)
         bs, num_inputs, inputs_size = inputs.shape
         inputs = self.norm_inputs(inputs)
         k = self.project_k(inputs)  # [B, num_inputs, slot_size]
@@ -440,17 +442,21 @@ class StoSAVi(nn.Module):
             encoder_out = self.encoder_bn(encoder_out.view(B * HW, C)).view(B, HW, C)
         return encoder_out
 
-    def encode(self, img, prev_slots=None):
+    @typechecked
+    def encode(self, img: TensorType["B", "T", "C", "H", "W"], prev_slots=None):
         """Encode a clip to post-slots.
 
         Returns (post_slots [B, T, num_slots, slot_size],
                  encoder_out [B, T, H*W, enc_out_channels]).
         """
-        check_tensor_shape(img, "img", ndim=5)
         B, T, C, H, W = img.shape
         if prev_slots is not None:
-            check_tensor_shape(prev_slots, "prev_slots", ndim=3,
-                               shape=(B, None, None))
+            # Cross-argument check: batch dim must match img.
+            if not torch.is_tensor(prev_slots) or prev_slots.ndim != 3 \
+                    or prev_slots.shape[0] != B:
+                raise ValueError(
+                    f"prev_slots must be a [B={B}, K, D] tensor, "
+                    f"got shape {getattr(prev_slots, 'shape', None)}")
         encoder_out = self._get_encoder_out(img.flatten(0, 1))
         encoder_out = encoder_out.unflatten(0, (B, T))
 
@@ -502,12 +508,12 @@ class StoSAVi(nn.Module):
         })
         return out_dict
 
-    def decode(self, slots):
+    @typechecked
+    def decode(self, slots: TensorType["B", "K", "D"]):
         """Decode slots to reconstructed images and masks.
 
         `slots`: [B, num_slots, slot_size].
         """
-        check_tensor_shape(slots, "slots", ndim=3)
         bs, num_slots, slot_size = slots.shape
         height, width = self.resolution
         num_channels = 3
@@ -626,6 +632,8 @@ class SAVi(nn.Module):
     def forward(self, x, **kwargs):
         """Forward pass. Accepts tensor [B, T, C, H, W] or dict {'img': ...}."""
         if isinstance(x, torch.Tensor):
-            check_tensor_shape(x, "x", ndim=5)
+            if x.ndim != 5:
+                raise ValueError(f"x must be 5-dimensional [B, T, C, H, W], "
+                                 f"got shape {tuple(x.shape)}")
             x = {'img': x}
         return self.model(x)

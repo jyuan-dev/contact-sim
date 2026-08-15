@@ -13,8 +13,10 @@ import numpy as np
 import cv2
 import torch
 from scipy.optimize import linear_sum_assignment
+from typeguard import typechecked
+from torchtyping import TensorType, patch_typeguard
 
-from src.utils.tensor_checks import check_tensor_shape
+patch_typeguard()
 
 
 def compute_binary_iou_dice(pred_mask, gt_mask, thresh=0.3):
@@ -118,7 +120,12 @@ class EvaluationSuite:
         return metrics
 
 
-def greedy_slot_assignments(pred_masks, gt_masks, thresh=0.5):
+@typechecked
+def greedy_slot_assignments(
+    pred_masks: TensorType["B", "T", "K", "H", "W"],
+    gt_masks: TensorType["B", "T", "M", "H", "W"],
+    thresh=0.5,
+):
     """
     Greedy per-slot argmax assignment + swap tracking — the canonical swap metric.
 
@@ -138,18 +145,10 @@ def greedy_slot_assignments(pred_masks, gt_masks, thresh=0.5):
         'frame_swaps': {t: [swaps, total]} — transitions counted entering frame t
         'assignments': [B, T, Kp] long tensor of assigned GT slot indices
         'iou_matrices': [B, T, Kp, Kg] float tensor
-    """
-    check_tensor_shape(pred_masks, "pred_masks", ndim=5)
-    check_tensor_shape(gt_masks, "gt_masks", ndim=5)
-    if pred_masks.shape[:2] != gt_masks.shape[:2]:
-        raise ValueError(
-            f"pred_masks and gt_masks must share (B, T), got "
-            f"{tuple(pred_masks.shape[:2])} vs {tuple(gt_masks.shape[:2])}")
-    if pred_masks.shape[-2:] != gt_masks.shape[-2:]:
-        raise ValueError(
-            f"pred_masks and gt_masks must share (H, W), got "
-            f"{tuple(pred_masks.shape[-2:])} vs {tuple(gt_masks.shape[-2:])}")
 
+    The annotations own the shape contract: same-named dims (B, T, H, W)
+    are cross-checked between the two arguments by the typechecker.
+    """
     B, T = pred_masks.shape[:2]
     p_bin = (pred_masks > thresh).float()
     g_bin = (gt_masks > thresh).float()
@@ -257,21 +256,23 @@ class DeterministicEvaluator:
         list) — episode_idx/start_frame come from the dataset batch and are
         the source of truth for per-sequence records.
         """
-        # Validate inputs before any computation.
-        if recon is not None and video is not None:
-            check_tensor_shape(recon, "recon", ndim=5)
-            check_tensor_shape(video, "video", ndim=5)
-            if recon.shape[:2] != video.shape[:2]:
+        # Validate inputs before any computation (annotations handle the
+        # per-argument tensor checks; cross-argument relations stay inline).
+        for name, t in (("pred_masks", pred_masks), ("gt_masks", gt_masks),
+                        ("recon", recon), ("video", video)):
+            if t is not None and (not torch.is_tensor(t) or t.ndim != 5):
                 raise ValueError(
-                    f"recon and video must share (B, T), got "
-                    f"{tuple(recon.shape[:2])} vs {tuple(video.shape[:2])}")
-        if pred_masks is not None and gt_masks is not None:
-            check_tensor_shape(pred_masks, "pred_masks", ndim=5)
-            check_tensor_shape(gt_masks, "gt_masks", ndim=5)
-            if pred_masks.shape[:2] != gt_masks.shape[:2]:
-                raise ValueError(
-                    f"pred_masks and gt_masks must share (B, T), got "
-                    f"{tuple(pred_masks.shape[:2])} vs {tuple(gt_masks.shape[:2])}")
+                    f"{name} must be a 5-dimensional tensor, "
+                    f"got {type(t).__name__ if not torch.is_tensor(t) else tuple(t.shape)}")
+        if recon is not None and video is not None and recon.shape[:2] != video.shape[:2]:
+            raise ValueError(
+                f"recon and video must share (B, T), got "
+                f"{tuple(recon.shape[:2])} vs {tuple(video.shape[:2])}")
+        if pred_masks is not None and gt_masks is not None \
+                and pred_masks.shape[:2] != gt_masks.shape[:2]:
+            raise ValueError(
+                f"pred_masks and gt_masks must share (B, T), got "
+                f"{tuple(pred_masks.shape[:2])} vs {tuple(gt_masks.shape[:2])}")
 
         mse_per_seq = None
         if recon is not None and video is not None:

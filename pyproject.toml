@@ -22,6 +22,8 @@ dependencies = [
     "tensorboard",
     "scikit-learn",
     "scikit-image",
+    "torchtyping",
+    "typeguard<3.0",
 ]
 
 [project.optional-dependencies]

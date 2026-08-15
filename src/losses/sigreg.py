@@ -10,11 +10,15 @@ characteristic function (ECF) test against N(0, I) per slot independently.
 
 import torch
 import torch.nn as nn
+from typeguard import typechecked
+from torchtyping import TensorType, patch_typeguard
 
-from src.utils.tensor_checks import check_tensor_shape
+patch_typeguard()
 
 
-def compute_sigreg_statistic(z, num_proj, knots=17, t_max=3.0, seed=None):
+@typechecked
+def compute_sigreg_statistic(z: TensorType["B", "T", "K", "D"], num_proj,
+                             knots=17, t_max=3.0, seed=None):
     """
     Per-slot Epps-Pulley ECF statistic — the single SIGReg core.
 
@@ -23,7 +27,6 @@ def compute_sigreg_statistic(z, num_proj, knots=17, t_max=3.0, seed=None):
     the random projections for reproducibility (metrics / tests); ``None``
     resamples them per call.
     """
-    check_tensor_shape(z, "z", ndim=4)
     B, T, K, D = z.shape
     proj = z.float().permute(2, 1, 0, 3)  # (K, T, B, D)
 
@@ -80,7 +83,9 @@ class SIGRegLoss(nn.Module):
         if z is None or z.numel() == 0:
             return torch.tensor(0.0), {"sigreg_loss": 0.0}
 
-        check_tensor_shape(z, "post_slots", ndim=4)
+        if not torch.is_tensor(z) or z.ndim != 4:
+            raise ValueError(f"post_slots must be a 4-dimensional [B, T, K, D] "
+                             f"tensor, got shape {getattr(z, 'shape', None)}")
         if z.shape[0] < 2:
             return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
 

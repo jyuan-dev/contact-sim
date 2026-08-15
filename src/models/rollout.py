@@ -9,13 +9,16 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typeguard import typechecked
+from torchtyping import TensorType, patch_typeguard
 
-from src.utils.tensor_checks import check_tensor_shape
+patch_typeguard()
 
 
+@typechecked
 def predict_slot_rollout(
     wrapper_model: nn.Module,
-    video: torch.Tensor,
+    video: TensorType["B", "T", "C", "H", "W"],
     n_cond_frames: int = 2,
 ) -> dict[str, torch.Tensor]:
     """
@@ -35,7 +38,7 @@ def predict_slot_rollout(
             'post_slots': [B, T, K, D]
             'is_rollout_mask': [T] boolean tensor (True for rollout frames t >= n_cond_frames)
     """
-    check_tensor_shape(video, "video", ndim=5)
+    # Cross-argument checks the shape spec cannot express stay inline.
     if not isinstance(n_cond_frames, int):
         raise TypeError(f"n_cond_frames must be an int, got {type(n_cond_frames).__name__}")
     if not 1 <= n_cond_frames <= video.shape[1]:
