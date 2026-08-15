@@ -105,20 +105,6 @@ class TestBaseTrainer(unittest.TestCase):
         finally:
             trainer.close()
 
-    def test_save_checkpoint(self):
-        """save_checkpoint should persist a .pt file and return its path."""
-        trainer = self._make_trainer()
-        try:
-            state = {'epoch': 1, 'loss': 0.5}
-            ckpt_path = trainer.save_checkpoint(state, filename="test_ckpt.pt")
-        finally:
-            trainer.close()
-
-        self.assertTrue(os.path.isfile(ckpt_path))
-        loaded = torch.load(ckpt_path, weights_only=True)
-        self.assertEqual(loaded['epoch'], 1)
-        self.assertAlmostEqual(loaded['loss'], 0.5)
-
     def test_close_restores_stdout(self):
         """After close(), sys.stdout should be restored to the original stream."""
         trainer = self._make_trainer()

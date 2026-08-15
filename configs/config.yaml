@@ -7,7 +7,7 @@
 #   and defines global training, optimization, hardware, and evaluation parameters.
 #
 # Common Usage Examples:
-#   - Default training run (Deformable SAVi on PushT dataset):
+#   - Default training run (SAVi on PushT dataset):
 #       python scripts/train.py
 #   - Train standard SAVi model with SIGReg loss:
 #       python scripts/train.py model=savi loss=savi_sigreg
@@ -16,12 +16,12 @@
 #   - Run 5-step dry-run sanity check:
 #       python scripts/train.py dry_run=true
 #   - Evaluate pre-trained checkpoint:
-#       python scripts/eval.py ckpt_path=scratch/checkpoints/deformable_savi_pusht/deformable_savi_best.pt
+#       python scripts/eval.py ckpt_path=scratch/checkpoints/savi_pusht/savi_best.pt
 # ==============================================================================
 
 # ── 1. Hydra Defaults Composition Group ──────────────────────────────────────
 defaults:
-  - model: deformable_savi     # Model config from configs/model/ ('deformable_savi' or 'savi')
+  - model: savi                # Model config from configs/model/
   - dataset: pusht             # Dataset config from configs/dataset/ ('pusht' or 'gridshapes')
   - loss: savi_default         # Loss composition config from configs/loss/ ('savi_default', 'savi_sigreg', 'savi_contrastive')
   - optional experiment: null  # Optional experiment override from configs/experiment/ (e.g. 'savi_pusht')

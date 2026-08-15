@@ -19,7 +19,6 @@ import torch.nn.functional as F
 
 from src.models.intact_actor import RobotSlotIntentActionActor
 from src.models.slotformer import (
-    get_inner_savi,
     build_pos_enc,
     TemporalSelfAttention,
     InteractiveSelfAttention,
@@ -306,16 +305,14 @@ class PIDMModel(nn.Module):
         self.robot_slot_idx = robot_slot_idx
         self.rollout_consistent = rollout_consistent
 
-        inner_savi = get_inner_savi(self.stage1_model)
-        slot_size = inner_savi.slot_size if hasattr(inner_savi, "slot_size") else 64
-        num_slots = inner_savi.num_slots if hasattr(inner_savi, "num_slots") else 4
-        self.slot_size = slot_size
-        self.num_slots = num_slots
+        inner_savi = self.stage1_model.inner_savi()
+        self.slot_size = inner_savi.slot_size
+        self.num_slots = inner_savi.num_slots
 
         # Goal-Conditioned Slot Rollouter
         self.rollouter = GoalConditionedSlotRollouter(
-            num_slots=num_slots,
-            slot_size=slot_size,
+            num_slots=self.num_slots,
+            slot_size=self.slot_size,
             history_len=history_len,
             t_pe=t_pe,
             slots_pe=slots_pe,
@@ -329,7 +326,7 @@ class PIDMModel(nn.Module):
 
         # Inverse Dynamics Model (IDM)
         self.idm_actor = RobotSlotIntentActionActor(
-            slot_dim=slot_size,
+            slot_dim=self.slot_size,
             action_dim=raw_action_dim,
             action_emb_dim=action_embed_dim,
             robot_slot_idx=robot_slot_idx,
@@ -353,37 +350,13 @@ class PIDMModel(nn.Module):
         """
         Extract per-frame slots [B, T, K, D] using frozen Stage 1 model.
         """
-        inner_savi = get_inner_savi(self.stage1_model)
-        if hasattr(inner_savi, "extract_slots") and callable(getattr(inner_savi, "extract_slots")):
-            return inner_savi.extract_slots(video)
-
-        B, T, C, H, W = video.shape
+        inner_savi = self.stage1_model.inner_savi()
 
         if hasattr(inner_savi, "_reset_rnn"):
             inner_savi._reset_rnn()
 
-        video_flat = video.flatten(0, 1)  # [B*T, C, H, W]
-        enc_out_all = inner_savi._get_encoder_out(video_flat)  # [B*T, HW, enc_channels]
-        enc_out_all = enc_out_all.unflatten(0, (B, T))  # [B, T, HW, enc_channels]
-
-        init_latents = inner_savi.init_latents.repeat(B, 1, 1)
-        prev_slots = None
-        all_slots = []
-
-        for t in range(T):
-            enc_out_t = enc_out_all[:, t]
-            if prev_slots is None:
-                latents = init_latents
-            else:
-                latents = inner_savi.predictor(prev_slots)
-
-            kernel_dist = inner_savi.kernel_dist_layer(latents)
-            kernels = inner_savi._sample_dist(kernel_dist)
-            post_slots = inner_savi.slot_attention(enc_out_t, kernels)
-            all_slots.append(post_slots)
-            prev_slots = post_slots
-
-        return torch.stack(all_slots, dim=1)  # [B, T, K, D]
+        post_slots, _ = inner_savi.encode(video)
+        return post_slots  # [B, T, K, D]
 
     def forward(self, batch: dict | torch.Tensor) -> dict[str, torch.Tensor]:
         """
@@ -495,7 +468,7 @@ class PIDMModel(nn.Module):
         # Visual reconstructions if requested
         if self.use_img_recon_loss or not self.training:
             full_slots = torch.cat([history_slots, pred_rollout_slots], dim=1)
-            inner_savi = get_inner_savi(self.stage1_model)
+            inner_savi = self.stage1_model.inner_savi()
             slots_flat = full_slots.flatten(0, 1)
             recon_img_flat, _, masks_flat, _ = inner_savi.decode(slots_flat)
 

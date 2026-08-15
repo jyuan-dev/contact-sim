@@ -13,14 +13,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def get_inner_savi(wrapper_model: nn.Module) -> nn.Module:
-    """Helper to unwrap nested model wrappers to obtain core StoSAVi model."""
-    model = getattr(wrapper_model, "model", wrapper_model)
-    while hasattr(model, "model"):
-        model = getattr(model, "model")
-    return model
-
-
 def get_sin_pos_enc(seq_len: int, d_model: int) -> torch.Tensor:
     """Sinusoid temporal positional encoding [1, seq_len, d_model]."""
     inv_freq = 1.0 / (10000.0 ** (torch.arange(0.0, d_model, 2.0) / d_model))
@@ -401,13 +393,9 @@ class SlotFormerModel(nn.Module):
         self.use_intact_actor = use_intact_actor
         self.action_loss_weight = action_loss_weight
 
-        inner_savi = get_inner_savi(stage1_model)
-        if hasattr(inner_savi, "num_slots"):
-            num_slots = inner_savi.num_slots
-            slot_dim = getattr(inner_savi, "slot_size", getattr(inner_savi, "slot_dim", 64))
-        else:
-            num_slots = 4
-            slot_dim = 64
+        inner_savi = stage1_model.inner_savi()
+        num_slots = inner_savi.num_slots
+        slot_dim = inner_savi.slot_size
 
         self.num_slots = num_slots
         self.slot_dim = slot_dim
@@ -467,34 +455,13 @@ class SlotFormerModel(nn.Module):
         Extract per-frame slots for full video [B, T, C, H, W] using Stage 1 model.
         Returns: [B, T, K, D]
         """
-        inner_savi = get_inner_savi(self.stage1_model)
-        B, T, C, H, W = video.shape
+        inner_savi = self.stage1_model.inner_savi()
 
         if hasattr(inner_savi, "_reset_rnn"):
             inner_savi._reset_rnn()
 
-        video_flat = video.flatten(0, 1)  # [B*T, C, H, W]
-        enc_out_all = inner_savi._get_encoder_out(video_flat)  # [B*T, HW, enc_channels]
-        enc_out_all = enc_out_all.unflatten(0, (B, T))  # [B, T, HW, enc_channels]
-
-        init_latents = inner_savi.init_latents.repeat(B, 1, 1)
-        prev_slots = None
-        all_slots = []
-
-        for t in range(T):
-            enc_out_t = enc_out_all[:, t]
-            if prev_slots is None:
-                latents = init_latents
-            else:
-                latents = inner_savi.predictor(prev_slots)
-
-            kernel_dist = inner_savi.kernel_dist_layer(latents)
-            kernels = inner_savi._sample_dist(kernel_dist)
-            post_slots = inner_savi.slot_attention(enc_out_t, kernels)
-            all_slots.append(post_slots)
-            prev_slots = post_slots
-
-        return torch.stack(all_slots, dim=1)  # [B, T, K, D]
+        post_slots, _ = inner_savi.encode(video)
+        return post_slots  # [B, T, K, D]
 
     def forward(self, batch: dict | torch.Tensor) -> dict[str, torch.Tensor]:
         """
@@ -545,7 +512,7 @@ class SlotFormerModel(nn.Module):
 
         if self.use_img_recon_loss or not self.training:
             full_slots = torch.cat([history_slots, pred_rollout_slots], dim=1)
-            inner_savi = get_inner_savi(self.stage1_model)
+            inner_savi = self.stage1_model.inner_savi()
             slots_flat = full_slots.flatten(0, 1)
             recon_img_flat, _, masks_flat, _ = inner_savi.decode(slots_flat)
 

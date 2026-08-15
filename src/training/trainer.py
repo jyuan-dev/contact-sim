@@ -105,12 +105,6 @@ class BaseTrainer:
     def log_image(self, tag: str, img_tensor: torch.Tensor, global_step: int):
         self.writer.add_image(tag, img_tensor, global_step)
 
-    def save_checkpoint(self, state_dict: dict, filename: str = "checkpoint.pt") -> str:
-        ckpt_path = os.path.join(self.save_dir, filename)
-        torch.save(state_dict, ckpt_path)
-        print(f"[{self.experiment_name}] Checkpoint saved -> {ckpt_path}", flush=True)
-        return ckpt_path
-
     def close(self):
         print(f"\n💡 HINT: Training completed! Inspect the tail of the log file using:\n   tail -n 50 {self.log_path}\n", flush=True)
         if self.writer:

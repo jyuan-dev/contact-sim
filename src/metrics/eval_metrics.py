@@ -84,9 +84,7 @@ def compute_fg_ari(pred_masks: torch.Tensor, gt_masks: torch.Tensor, bg_threshol
         - Evaluates how accurately predicted slot alpha masks partition object pixels, excluding background.
         - Output ranges from 0.0 (0%) to 1.0 (100%), where higher values indicate better object separation.
     """
-    # Squeeze channel dimension if 6D [B, T, K, 1, H, W]
-    if pred_masks.ndim == 6 and pred_masks.shape[3] == 1:
-        pred_masks = pred_masks.squeeze(3)
+    # pred_masks arrive normalized: [B, T, K, H, W] (wrapper-owned squeeze)
 
     if pred_masks.ndim == 5:
         B, T, K, H, W = pred_masks.shape
@@ -190,9 +188,7 @@ def compute_collapse_diagnostics(out: dict) -> dict[str, float]:
 
     pred_masks = out.get("pred_masks")
     if pred_masks is not None and pred_masks.numel() > 0:
-        # pred_masks: [B, T, K, H, W]
-        if pred_masks.ndim == 6 and pred_masks.shape[3] == 1:
-            pred_masks = pred_masks.squeeze(3)
+        # pred_masks arrive normalized: [B, T, K, H, W] (wrapper-owned squeeze)
 
         B, T, K = pred_masks.shape[:3]
         # Per-slot fraction of pixels won (argmax-based).
@@ -224,21 +220,18 @@ def compute_collapse_diagnostics(out: dict) -> dict[str, float]:
     return metrics
 
 
-def compute_sigreg_stat(post_slots: torch.Tensor, sketch_dim: int = 64) -> float:
+def compute_sigreg_stat(post_slots: torch.Tensor, sketch_dim: int = 64, seed: int | None = None) -> float:
     """
-    Computes Epps-Pulley empirical characteristic function statistic matching standard
-    Gaussian N(0, I) (Le-WM / Garrido et al., 2024).
+    Epps-Pulley empirical characteristic function statistic matching standard
+    Gaussian N(0, I) (Le-WM / Garrido et al., 2024) — thin wrapper over the
+    canonical SIGReg core. One input convention: ``[B, T, K, D]``.
 
     Interpretation:
         - Lower values indicate slot representations are more isotropic / Gaussian.
     """
-    if post_slots.ndim == 2:
-        post_slots = post_slots.view(post_slots.size(0), 1, 1, post_slots.size(1))
-    elif post_slots.ndim == 3:
-        post_slots = post_slots.unsqueeze(1)
+    from src.losses.sigreg import compute_sigreg_statistic
 
-    from src.losses.sigreg import SIGRegLoss
-    _, info = SIGRegLoss(num_proj=sketch_dim)(post_slots)
-    return float(info["sigreg_loss"]) if isinstance(info, dict) else float(info)
+    per_slot = compute_sigreg_statistic(post_slots, sketch_dim, seed=seed)
+    return float(per_slot.mean().item())
 
 

@@ -21,8 +21,11 @@ if REPO_ROOT not in sys.path:
 
 from src.models.factory import build_model
 from src.models.rollout import predict_slot_rollout
+from src.metrics import greedy_slot_assignments
 from src.datasets import DeterministicEpisodeEvalDataset
 from src.utils.vis_utils import render_slot_overlay_frame, save_frames_to_gif
+from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
+from src.utils.data_utils import find_dataset_path
 
 
 def run_full_evaluation(
@@ -46,9 +49,8 @@ def run_full_evaluation(
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    h5_path = "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5"
     eval_dataset = DeterministicEpisodeEvalDataset(
-        h5_path=h5_path,
+        h5_path=find_dataset_path(None),
         split="val",
         resolution=(64, 64),
         n_sample_frames=n_sample_frames,
@@ -57,39 +59,10 @@ def run_full_evaluation(
     )
     val_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
-    # 1. Build Stage 2 SlotFormer model dynamically
-    ckpt = torch.load(ckpt_path, map_location="cpu")
-    state_dict = ckpt.get("model_state", ckpt)
-    
-    d_model = 128
-    ffn_dim = 512
-    num_layers = 4
-    for k, v in state_dict.items():
-        if "rollouter.in_proj.weight" in k:
-            d_model = v.shape[0]
-        elif "rollouter.transformer_encoder.layers.0.linear1.weight" in k:
-            ffn_dim = v.shape[0]
-        elif "rollouter.transformer_encoder.layers." in k:
-            parts = k.split(".")
-            for p in parts:
-                if p.isdigit():
-                    num_layers = max(num_layers, int(p) + 1)
-                    
-    cfg = {
-        "model": {
-            "name": "slotformer",
-            "type": "slotformer",
-            "d_model": d_model,
-            "num_layers": num_layers,
-            "num_heads": 8,
-            "ffn_dim": ffn_dim,
-            "stage1_ckpt_path": "scratch/checkpoints/savi_pusht/savi_best.pt",
-        }
-    }
-
-    model = build_model(cfg).to(device)
-    state = torch.load(ckpt_path, map_location=device or "cpu").get("model_state", ckpt)
-    model.load_state_dict(state, strict=False)
+    # 1. Reconstruct the Stage 2 SlotFormer experiment from the checkpoint
+    model, cfg = bootstrap_checkpoint(ckpt_path)
+    model = model.to(device)
+    load_checkpoint_state(model, ckpt_path, device=device)
     model.eval()
 
     cond_mses, rollout_mses = [], []
@@ -139,32 +112,21 @@ def run_full_evaluation(
                     else:
                         rollout_mious.append(iou_t)
 
-            # Slot Swapping Analysis per sequence
+            # Slot Swapping Analysis per sequence (canonical greedy swap metric)
             if pred_masks is not None and gt_masks is not None:
                 min_k = min(pred_masks.shape[2], gt_masks.shape[2])
-                p_bin = (pred_masks[:, :, :min_k] > 0.5).float()
-                g_bin = (gt_masks[:, :, :min_k] > 0.5).float()
+                assign = greedy_slot_assignments(
+                    pred_masks[:, :, :min_k], gt_masks[:, :, :min_k], thresh=0.5)['assignments']  # [B, T, Kp]
 
                 for b in range(B):
                     total_episodes += 1
                     ep_swap_count = 0
-                    prev_assign = None
 
-                    for t in range(n_cond_frames - 1, T):
-                        p_bt = p_bin[b, t]
-                        g_bt = g_bin[b, t]
-                        inter_m = (p_bt.unsqueeze(1) * g_bt.unsqueeze(0)).sum(dim=(-2, -1))
-                        union_m = p_bt.unsqueeze(1).sum(dim=(-2, -1)) + g_bt.unsqueeze(0).sum(dim=(-2, -1)) - inter_m
-                        iou_m = (inter_m + 1e-6) / (union_m + 1e-6)
-
-                        curr_assign = torch.argmax(iou_m, dim=1).tolist()
-                        if prev_assign is not None:
-                            total_rollout_transitions += 1
-                            if curr_assign != prev_assign:
-                                swap_rollout_transitions += 1
-                                ep_swap_count += 1
-
-                        prev_assign = curr_assign
+                    for t in range(n_cond_frames, T):
+                        total_rollout_transitions += 1
+                        if not torch.equal(assign[b, t], assign[b, t - 1]):
+                            swap_rollout_transitions += 1
+                            ep_swap_count += 1
 
                     if ep_swap_count >= 1:
                         episodes_with_swap += 1

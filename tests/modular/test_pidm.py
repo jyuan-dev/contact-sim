@@ -26,9 +26,13 @@ class DummyStage1Model(nn.Module):
         self.slot_size = slot_size
         self.dummy_linear = nn.Linear(3, slot_size)
 
-    def extract_slots(self, video: torch.Tensor) -> torch.Tensor:
+    def inner_savi(self):
+        return self
+
+    def encode(self, video: torch.Tensor, prev_slots=None):
         B, T, C, H, W = video.shape
-        return torch.randn(B, T, self.num_slots, self.slot_size, device=video.device)
+        slots = torch.randn(B, T, self.num_slots, self.slot_size, device=video.device)
+        return slots, None
 
     def decode(self, slots_flat: torch.Tensor):
         N = slots_flat.shape[0]

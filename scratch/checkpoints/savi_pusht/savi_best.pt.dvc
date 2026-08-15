@@ -1,5 +1,5 @@
 outs:
-- md5: 1f1ec8d563731bae59173f0ccabf7c46
-  size: 4214973
+- md5: ed6720d00a9cd658f63732fe2b64c4ea
+  size: 4214141
   hash: md5
   path: savi_best.pt

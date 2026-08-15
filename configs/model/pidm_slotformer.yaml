@@ -34,6 +34,3 @@ rollout_consistent: true         # Jointly train over GT and rollout-predicted t
 slot_loss_weight: 1.0
 action_loss_weight: 1.0
 
-weight_dict:
-  slot_mse: 1.0
-  action_nll: 1.0

@@ -20,23 +20,27 @@ class TestFindDatasetPath(unittest.TestCase):
         result = find_dataset_path(__file__)   # __file__ always exists
         self.assertEqual(result, __file__)
 
-    def test_missing_path_falls_back(self):
-        """When path is missing, the function searches fallback locations
-        and ultimately returns the original path if nothing is found."""
+    def test_missing_path_raises(self):
+        """Missing paths raise FileNotFoundError listing probed locations."""
         non_existent = "/tmp/does_not_exist_12345.h5"
-        result = find_dataset_path(non_existent, default_filename="does_not_exist_12345.h5")
-        # Should not raise; returns something (either a fallback or the original)
-        self.assertIsInstance(result, str)
+        with self.assertRaises(FileNotFoundError) as ctx:
+            find_dataset_path(non_existent, default_filename="does_not_exist_12345.h5")
+        self.assertIn("does_not_exist_12345.h5", str(ctx.exception))
 
-    def test_none_path_falls_back(self):
-        """Passing None should return fallback if found, or None if dummy default_filename is non-existent."""
-        result = find_dataset_path(None, default_filename="non_existent_dummy_123.h5")
-        self.assertIsNone(result)
+    def test_none_path_raises_when_nothing_found(self):
+        """None probes fallbacks; raises when no candidate exists."""
+        with self.assertRaises(FileNotFoundError):
+            find_dataset_path(None, default_filename="non_existent_dummy_123.h5")
 
-    def test_empty_string_falls_back(self):
+    def test_none_path_finds_default_dataset(self):
+        """None probes fallbacks and finds the real PushT dataset."""
+        result = find_dataset_path(None)
+        self.assertTrue(os.path.exists(result))
+
+    def test_empty_string_raises(self):
         """Empty-string path is treated as missing."""
-        result = find_dataset_path("", default_filename="non_existent_dummy_123.h5")
-        self.assertEqual(result, "")
+        with self.assertRaises(FileNotFoundError):
+            find_dataset_path("", default_filename="non_existent_dummy_123.h5")
 
 
 class TestGetDataset(unittest.TestCase):

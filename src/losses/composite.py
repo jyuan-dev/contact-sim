@@ -50,7 +50,7 @@ class CompositeLoss(nn.Module):
                 loss_dict[f"{name}_loss"] = float(sub_info)
 
         if total_loss is None:
-            device = out.get("recon_img", out.get("input_img")).device if out else "cpu"
+            device = out["input_img"].device if out else "cpu"
             total_loss = torch.tensor(0.0, device=device)
 
         loss_dict["total_loss"] = total_loss.item()

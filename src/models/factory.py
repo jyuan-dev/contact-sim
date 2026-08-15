@@ -154,22 +154,15 @@ def build_model(cfg) -> BaseModelWrapper:
 
     cls = _MODEL_REGISTRY[model_type]
 
-    # Instantiate loss module from Hydra loss config if present
+    # Instantiate loss module from Hydra loss config if present — the single
+    # loss-construction path. Weights live in each sub-loss's config; there
+    # is no weight_dict plumbing.
     loss_cfg = cfg.get("loss")
     if loss_cfg is not None:
         from src.losses import build_loss
 
-        loss_fn = build_loss(loss_cfg)
         model_cfg = dict(model_cfg)
-        model_cfg["loss_fn"] = loss_fn
-        # Merge only actual loss weight values (skip Hydra metadata keys)
-        if isinstance(loss_cfg, dict):
-            loss_weights = {k: v for k, v in loss_cfg.items()
-                            if not k.startswith('_') and isinstance(v, (int, float))}
-            if loss_weights:
-                weight_dict = dict(model_cfg.get("weight_dict") or {})
-                weight_dict.update(loss_weights)
-                model_cfg["weight_dict"] = weight_dict
+        model_cfg["loss_fn"] = build_loss(loss_cfg)
 
     return cls.build(model_cfg)
 

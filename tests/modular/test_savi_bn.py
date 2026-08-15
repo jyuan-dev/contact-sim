@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 
 from src.models.savi import SAVi, SlotAttentionWithBN
-from src.models.deformable_savi import DeformableSAVi
 from src.models.factory import build_model
 
 
@@ -54,22 +53,6 @@ class TestSAVIBatchNorm(unittest.TestCase):
 
         self.assertIsNotNone(x.grad)
         self.assertIsNotNone(model.encoder_bn.weight.grad)
-
-    def test_deformable_savi_with_bn(self):
-        """Verify DeformableSAVi supports use_encoder_bn and use_residual_bn."""
-        model = DeformableSAVi(
-            resolution=(64, 64),
-            clip_len=4,
-            num_slots=3,
-            slot_dim=32,
-            use_encoder_bn=True,
-            use_residual_bn=True,
-        )
-        model.train()
-
-        x = torch.randn(2, 4, 3, 64, 64)
-        out = model(x)
-        self.assertEqual(out["post_slots"].shape, (2, 4, 3, 32))
 
     def test_build_model_with_bn_config(self):
         """Verify build_model dispatches use_encoder_bn and use_residual_bn properly."""

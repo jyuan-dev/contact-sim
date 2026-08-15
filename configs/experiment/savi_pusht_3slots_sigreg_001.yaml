@@ -1,0 +1,27 @@
+# @package _global_
+
+defaults:
+  - override /model: savi
+  - override /dataset: pusht
+  - override /loss: savi_sigreg
+
+exp_name: "savi_pusht_3slots_sigreg_001"
+epochs: 8
+batch_size: 128
+lr: 2e-4
+
+model:
+  num_slots: 3
+  slot_dict:
+    num_slots: 3
+    slot_size: 64
+  use_encoder_bn: true
+  use_residual_bn: true
+
+dataset:
+  include_goal_mask: false
+
+loss:
+  losses:
+    sigreg:
+      weight: 0.01

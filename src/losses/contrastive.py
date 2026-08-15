@@ -20,9 +20,9 @@ class TemporalSlotContrastiveLoss(nn.Module):
 
     def forward(self, out, batch=None):
         if isinstance(out, dict):
-            post_slots = out.get("post_slots", out.get("slots"))
+            post_slots = out["post_slots"]
             if post_slots is None:
-                device = out.get("recon_img", out.get("input_img")).device if out else "cpu"
+                device = out["input_img"].device if out else "cpu"
                 return torch.tensor(0.0, device=device), 0.0
         else:
             post_slots = out

@@ -1,6 +1,6 @@
 """
 Tests for src/models — covering:
-  - SAVi and Deformable SAVi models
+  - SAVi models
   - Model registry (@register_model decorator + build_model dispatch)
   - BaseModelWrapper ABC enforcement
   - Wrapper forward() output contract (ModelOutput keys)
@@ -18,13 +18,11 @@ import os
 import torch
 
 from src.models.savi import SAVi
-from src.models.deformable_savi import DeformableSAVi
 from src.models.factory import build_model, register_model, list_models
 from src.models.base import BaseModelWrapper
 from src.models.base import ModelOutput
 from src.models.wrappers import (
     StandardizedSAViWrapper,
-    StandardizedDeformableSAViWrapper,
 )
 
 # ── Moved from model_output.py (only tests used them) ─────────────────────────
@@ -49,7 +47,7 @@ class TestModelRegistry(unittest.TestCase):
     def test_list_models_contains_expected(self):
         """list_models() should return all built-in model types."""
         registered = list_models()
-        for name in ("savi", "stosavi", "deformable_savi"):
+        for name in ("savi", "stosavi"):
             self.assertIn(name, registered, f"'{name}' not found in registry: {registered}")
 
     def test_register_model_adds_to_registry(self):
@@ -82,12 +80,6 @@ class TestModelRegistry(unittest.TestCase):
         cfg = {'model': {'name': 'savi', 'type': 'savi', 'num_slots': 4}}
         model = build_model(cfg)
         self.assertIsInstance(model, StandardizedSAViWrapper)
-
-    def test_build_model_dispatches_deformable_savi(self):
-        """build_model({'model': {'name': 'deformable_savi', ...}}) should return a DeformableSAViWrapper."""
-        cfg = {'model': {'name': 'deformable_savi', 'type': 'deformable_savi', 'num_slots': 4}}
-        model = build_model(cfg)
-        self.assertIsInstance(model, StandardizedDeformableSAViWrapper)
 
     def test_build_model_unknown_raises_value_error(self):
         """build_model with an unknown type should raise ValueError listing available models."""
@@ -187,20 +179,6 @@ class TestStandardizedSAViWrapper(unittest.TestCase):
         out = wrapper(torch.randn(1, 3, 3, 64, 64))
         for key in _EVAL_OUTPUT_KEYS:
             self.assertIn(key, out, f"Missing EVAL_OUTPUT_KEY: '{key}'")
-
-
-class TestStandardizedDeformableSAViWrapper(unittest.TestCase):
-    def _make_deformable_savi_wrapper(self):
-        base = DeformableSAVi(resolution=(64, 64), clip_len=3, num_slots=4, slot_dim=64, num_iterations=2)
-        return StandardizedDeformableSAViWrapper(base)
-
-    def test_output_contract_keys(self):
-        """Deformable SAVi wrapper output must contain all standardised contract keys."""
-        wrapper = self._make_deformable_savi_wrapper()
-        x = torch.randn(2, 3, 3, 64, 64)
-        out = wrapper(x)
-        for key in ('pred_boxes', 'pred_masks', 'pred_logits', 'recon_img', 'input_img'):
-            self.assertIn(key, out)
 
 
 # ── run_epoch() Mock Tests ────────────────────────────────────────────────────

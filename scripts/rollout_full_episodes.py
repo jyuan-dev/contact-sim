@@ -23,6 +23,8 @@ if REPO_ROOT not in sys.path:
 from src.models.factory import build_model
 from src.models.rollout import predict_slot_rollout
 from src.utils.vis_utils import render_slot_overlay_frame, save_frames_to_gif
+from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
+from src.utils.data_utils import find_dataset_path
 
 
 def render_3panel_composite_frame(
@@ -202,8 +204,7 @@ def main():
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    h5_path = "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5"
-    h5_file = h5py.File(h5_path, "r")
+    h5_file = h5py.File(find_dataset_path(None), "r")
     offs = h5_file["ep_offset"][:]
     lens = h5_file["ep_len"][:]
     n_episodes = len(lens)
@@ -218,12 +219,8 @@ def main():
     else:
         selected_ep = args.ep_idx
 
-    ckpt_dir = os.path.dirname(ckpt_path)
-    from omegaconf import OmegaConf
-    saved_cfg = OmegaConf.load(os.path.join(ckpt_dir, "config.yaml"))
-    cfg = OmegaConf.to_container(saved_cfg, resolve=True)
-
-    model = build_model(cfg).to(args.device)
+    model, cfg = bootstrap_checkpoint(ckpt_path)
+    model = model.to(args.device)
     from src.utils.training_utils import load_checkpoint_state
     load_checkpoint_state(model, ckpt_path, device=args.device)
     model.eval()

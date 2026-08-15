@@ -10,8 +10,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.models.slotformer import get_inner_savi
-
 
 def predict_slot_rollout(
     wrapper_model: nn.Module,
@@ -22,8 +20,8 @@ def predict_slot_rollout(
     Perform autoregressive future slot rollout.
 
     Args:
-        wrapper_model: StandardizedSAViWrapper, StandardizedDeformableSAViWrapper,
-                       or StandardizedSlotFormerWrapper instance.
+        wrapper_model: StandardizedSAViWrapper or StandardizedSlotFormerWrapper
+                       instance.
         video: [B, T, C, H, W] video clip tensor.
         n_cond_frames: Number of initial context frames to condition on (e.g. 2).
 
@@ -39,11 +37,10 @@ def predict_slot_rollout(
 
     # Check if Stage 2 SlotFormerModel is present
     if hasattr(model, "rollouter") and hasattr(model, "stage1_model"):
-        stage1_wrapper = model.stage1_model
-        inner_savi = get_inner_savi(stage1_wrapper)
+        inner_savi = model.stage1_model.inner_savi()
         rollouter = model.rollouter
     else:
-        inner_savi = get_inner_savi(wrapper_model)
+        inner_savi = wrapper_model.inner_savi()
         rollouter = None
 
     device = video.device
@@ -52,32 +49,11 @@ def predict_slot_rollout(
     rollout_len = T - n_cond_frames
 
     # 1. Conditioned encoding for frames 0 .. n_cond_frames - 1
-    cond_video = video[:, :n_cond_frames]
-    cond_slots = []
-
     if hasattr(inner_savi, "_reset_rnn"):
         inner_savi._reset_rnn()
 
-    init_latents = inner_savi.init_latents.repeat(B, 1, 1)  # [B, K, D]
-    prev_slots = None
-
-    for t in range(n_cond_frames):
-        img_t = cond_video[:, t]
-        enc_out_t = inner_savi._get_encoder_out(img_t)
-
-        if prev_slots is None:
-            latents = init_latents
-        else:
-            latents = inner_savi.predictor(prev_slots)
-
-        kernel_dist = inner_savi.kernel_dist_layer(latents)
-        kernels = inner_savi._sample_dist(kernel_dist)
-
-        post_slots = inner_savi.slot_attention(enc_out_t, kernels)
-        cond_slots.append(post_slots)
-        prev_slots = post_slots
-
-    cond_slots_tensor = torch.stack(cond_slots, dim=1)  # [B, n_cond_frames, K, D]
+    cond_slots_tensor, _ = inner_savi.encode(video[:, :n_cond_frames])  # [B, n_cond_frames, K, D]
+    prev_slots = cond_slots_tensor[:, -1]
 
     # 2. Autoregressive Rollout phase: for frames n_cond_frames .. T - 1
     if rollout_len > 0:

@@ -6,13 +6,11 @@ the global registry in ``src.models.factory``.
 
 Available wrappers (registered names):
   - "savi", "stosavi"        → StandardizedSAViWrapper
-  - "deformable_savi"        → StandardizedDeformableSAViWrapper
   - "slotformer", "slot_former" → StandardizedSlotFormerWrapper
 """
 
 from src.models.wrappers.savi_wrapper import (
     StandardizedSAViWrapper,
-    StandardizedDeformableSAViWrapper,
 )
 from src.models.wrappers.slotformer_wrapper import (
     StandardizedSlotFormerWrapper,
@@ -20,6 +18,5 @@ from src.models.wrappers.slotformer_wrapper import (
 
 __all__ = [
     "StandardizedSAViWrapper",
-    "StandardizedDeformableSAViWrapper",
     "StandardizedSlotFormerWrapper",
 ]

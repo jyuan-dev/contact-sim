@@ -48,6 +48,7 @@ class PushTMaskHDF5Dataset(Dataset):
         seed: int = 42,
         load_masks: bool = False,
         preload_ram: bool = True,
+        include_goal_mask: bool = True,
     ):
         assert split in ('train', 'val')
         self.h5_path = h5_path
@@ -57,6 +58,7 @@ class PushTMaskHDF5Dataset(Dataset):
         self.frame_offset = frame_offset
         self.load_masks = load_masks
         self.preload_ram = preload_ram
+        self.include_goal_mask = include_goal_mask
         self._h5 = None  # lazy-opened per-worker
 
         if self.preload_ram:
@@ -132,11 +134,12 @@ class PushTMaskHDF5Dataset(Dataset):
             masks = {k: self.h5[k][abs_idxs] for k in self.MASK_KEYS}
             agent_m = torch.from_numpy((masks['agent_masks'] > 127).astype(np.float32))
             block_m = torch.from_numpy((masks['block_masks'] > 127).astype(np.float32))
-            goal_m = torch.from_numpy((masks['goal_masks'] > 127).astype(np.float32))
-
-            # Visible Goal = Goal AND NOT (Block OR Agent)
-            goal_visible = torch.clamp(goal_m - torch.maximum(block_m, agent_m), 0.0, 1.0)
-            gt_masks = torch.stack([agent_m, block_m, goal_visible], dim=1)
+            if self.include_goal_mask:
+                goal_m = torch.from_numpy((masks['goal_masks'] > 127).astype(np.float32))
+                goal_visible = torch.clamp(goal_m - torch.maximum(block_m, agent_m), 0.0, 1.0)
+                gt_masks = torch.stack([agent_m, block_m, goal_visible], dim=1)
+            else:
+                gt_masks = torch.stack([agent_m, block_m], dim=1)
             item['gt_masks'] = gt_masks
 
         return item
@@ -163,12 +166,14 @@ class DeterministicEpisodeEvalDataset(Dataset):
         clips_per_episode: int = 2,
         seed: int = 42,
         base_seed: int = None,
+        include_goal_mask: bool = True,
     ):
         self.h5_path = h5_path
         self.split = split
         self.resolution = resolution
         self.n_sample_frames = n_sample_frames
         self.clips_per_episode = clips_per_episode
+        self.include_goal_mask = include_goal_mask
         self._h5 = None
         if base_seed is not None:
             seed = base_seed
@@ -234,10 +239,12 @@ class DeterministicEpisodeEvalDataset(Dataset):
 
         agent_m = (masks['agent_masks'] > 127).astype(np.float32)
         block_m = (masks['block_masks'] > 127).astype(np.float32)
-        goal_m = (masks['goal_masks'] > 127).astype(np.float32)
-        goal_visible = np.clip(goal_m - np.maximum(block_m, agent_m), 0.0, 1.0)
-
-        gt_masks = np.stack([agent_m, block_m, goal_visible], axis=1)
+        if self.include_goal_mask:
+            goal_m = (masks['goal_masks'] > 127).astype(np.float32)
+            goal_visible = np.clip(goal_m - np.maximum(block_m, agent_m), 0.0, 1.0)
+            gt_masks = np.stack([agent_m, block_m, goal_visible], axis=1)
+        else:
+            gt_masks = np.stack([agent_m, block_m], axis=1)
         gt_masks = torch.from_numpy(gt_masks).float()
 
         return {

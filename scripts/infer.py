@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-Quick Inspection & Visualization CLI Tool for SAVi / Deformable SAVi Checkpoints.
+Quick Inspection & Visualization CLI Tool for SAVi Checkpoints.
 
 Usage:
   python scripts/infer.py --ckpt_path scratch/checkpoints/savi_pusht/savi_best.pt
-  python scripts/infer.py --ckpt_path scratch/checkpoints/deformable_savi_pusht/deformable_savi_best.pt --num_sequences 5
 """
 
 import os
@@ -17,10 +16,12 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from src.models.factory import build_model
 from src.datasets.factory import build_dataloader
+from src.metrics import greedy_slot_assignments
 from src.utils.vis_utils import render_slot_overlay_frame, save_frames_to_gif
 from src.utils.training_utils import load_checkpoint_state
+from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
+from src.utils.data_utils import find_dataset_path
 
 
 def run_quick_inference(ckpt_path: str, clip_idx: int = None, num_sequences: int = 5, out_gif: str = "scratch/quick_infer_demo.gif", device: str = 'cpu'):
@@ -35,9 +36,9 @@ def run_quick_inference(ckpt_path: str, clip_idx: int = None, num_sequences: int
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    from scripts.eval import DeterministicEpisodeEvalDataset
+    from src.datasets.pusht import DeterministicEpisodeEvalDataset
     eval_dataset = DeterministicEpisodeEvalDataset(
-        h5_path='/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5',
+        h5_path=find_dataset_path(None),
         split='val',
         resolution=(64, 64),
         n_sample_frames=6,
@@ -45,32 +46,9 @@ def run_quick_inference(ckpt_path: str, clip_idx: int = None, num_sequences: int
         base_seed=42
     )
 
-    # ── Auto-discover training config.yaml ────────────────────────────────────
-    ckpt_dir = os.path.dirname(ckpt_path)
-    config_candidates = [
-        os.path.join(ckpt_dir, "config.yaml"),
-        os.path.join(ckpt_dir, ".hydra", "config.yaml"),
-    ]
-    saved_cfg = None
-    for cand in config_candidates:
-        if os.path.exists(cand):
-            try:
-                from omegaconf import OmegaConf
-                saved_cfg = OmegaConf.load(cand)
-                print(f"[Auto-Config] Loaded training configuration from: {cand}")
-                break
-            except Exception as e:
-                raise RuntimeError(f"Failed to load training config file from '{cand}': {e}")
-
-    if saved_cfg is None:
-        raise FileNotFoundError(
-            f"Training config file 'config.yaml' not found in checkpoint directory '{ckpt_dir}'. "
-            f"Expected config.yaml or .hydra/config.yaml alongside checkpoint '{ckpt_path}'."
-        )
-
-    cfg = OmegaConf.to_container(saved_cfg, resolve=True)
-
-    model = build_model(cfg).to(device)
+    # ── Reconstruct the experiment from the checkpoint ───────────────────────
+    model, cfg = bootstrap_checkpoint(ckpt_path)
+    model = model.to(device)
     load_checkpoint_state(model, ckpt_path, device=device)
     model.eval()
 
@@ -101,8 +79,13 @@ def run_quick_inference(ckpt_path: str, clip_idx: int = None, num_sequences: int
             p_bin = (pred_masks[0] > 0.5).float()
             g_bin = (gt_masks[0] > 0.5).float() if gt_masks is not None else None
 
+            # Canonical greedy swap tracking (shared with eval.py + multi-swap rollout)
+            if pred_masks is not None and gt_masks is not None:
+                swap_info = greedy_slot_assignments(pred_masks[:1], gt_masks[:1], thresh=0.5)
+                iou_mats = swap_info['iou_matrices'][0]  # [T, Kp, Kg]
+                assigns = swap_info['assignments'][0]    # [T, Kp]
+
             print(f"\n================ Clip {c_idx} Slot Occupation Breakdown ================")
-            prev_assignment = None
 
             for t in range(T):
                 frame_rgb = video_np[t]
@@ -119,14 +102,11 @@ def run_quick_inference(ckpt_path: str, clip_idx: int = None, num_sequences: int
 
                 if g_bin is not None:
                     p_t = p_bin[t]
-                    g_t = g_bin[t]
-                    inter_mat = (p_t.unsqueeze(1) * g_t.unsqueeze(0)).sum(dim=(-2, -1))
-                    union_mat = p_t.unsqueeze(1).sum(dim=(-2, -1)) + g_t.unsqueeze(0).sum(dim=(-2, -1)) - inter_mat
-                    iou_mat = (inter_mat + 1e-6) / (union_mat + 1e-6)
+                    iou_mat = iou_mats[t]
+                    curr_assignment = assigns[t].tolist()
+                    is_swapped = (t > 0 and not torch.equal(assigns[t], assigns[t - 1]))
 
                     areas_px = p_t.sum(dim=(-2, -1)).cpu().numpy()
-                    curr_assignment = torch.argmax(iou_mat, dim=1).tolist()
-                    is_swapped = (prev_assignment is not None and curr_assignment != prev_assignment)
 
                     print(f"--- Frame t = {t+1} {'[SLOT SWAP DETECTED!]' if is_swapped else ''} ---")
                     print(f"  Slot Occupation Areas (Total Image = 4096 px):")
@@ -139,8 +119,6 @@ def run_quick_inference(ckpt_path: str, clip_idx: int = None, num_sequences: int
                     print("          GT 0 (Robot)  GT 1 (T-Block)  GT 2 (Goal)")
                     for k in range(min(3, p_t.shape[0])):
                         print(f"  Slot {k}:   {iou_mat[k, 0].item()*100:6.1f}%       {iou_mat[k, 1].item()*100:6.1f}%       {iou_mat[k, 2].item()*100:6.1f}%")
-
-                    prev_assignment = curr_assignment
 
     print("\n---------------- Quick Inspection Report ----------------")
     print(f"Inspected Clips:             {len(target_indices)}")

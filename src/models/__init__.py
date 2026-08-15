@@ -11,7 +11,6 @@ ModelOutput             TypedDict defining the standardized forward output contr
 
 Wrapper classes:
   StandardizedSAViWrapper
-  StandardizedDeformableSAViWrapper
 
 Base model classes:
   SAVi
@@ -23,7 +22,6 @@ from src.models.savi import SAVi
 
 from src.models.wrappers import (
     StandardizedSAViWrapper,
-    StandardizedDeformableSAViWrapper,
 )
 
 __all__ = [
@@ -37,6 +35,5 @@ __all__ = [
     "SAVi",
     # Wrapper classes
     "StandardizedSAViWrapper",
-    "StandardizedDeformableSAViWrapper",
 ]
 

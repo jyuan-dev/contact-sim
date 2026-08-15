@@ -3,6 +3,7 @@ Training helper functions: learning rate scheduling, random seed initialization,
 """
 
 import math
+import os
 import random
 import numpy as np
 import torch
@@ -32,41 +33,66 @@ def get_device(requested_device: str = None) -> torch.device:
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-# ── Checkpoint loading ────────────────────────────────────────────────────────
+# ── Checkpoint saving / loading ──────────────────────────────────────────────
+
+def save_checkpoint(model: torch.nn.Module, path: str, epoch: int) -> None:
+    """
+    Save a checkpoint in the canonical format: the model's own state dict
+    (no unwrapping) plus the epoch.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    payload = {
+        "model_state": model.state_dict(),
+        "epoch": epoch,
+    }
+    torch.save(payload, path)
+    print(f"Saved checkpoint: {path}")
+
 
 def load_checkpoint_state(model: torch.nn.Module, ckpt_path: str,
                           device: torch.device = None) -> None:
     """
     Load a checkpoint into *model*, validating that keys match.
 
+    Recognized state-dict formats (documented table):
+
+    ========================  =====================================
+    format                    adaptation
+    ========================  =====================================
+    canonical                 model's own keys — exact match
+    legacy inner              bare core keys — prefix ``model.model.``
+    legacy savi               ``model.*`` — prefix ``model.``
+    legacy wrapper            ``model.model.*`` — strip one ``model.``
+    DDP                       ``module.`` — strip
+    ========================  =====================================
+
     Uses ``strict=False`` to discover missing and unexpected keys, then
-    **raises** ``ValueError`` if either set is non-empty.  This catches
-    wrapper-level prefix mismatches, DDP ``module.`` leftovers, and
-    model-vs-checkpoint architecture drift instead of silently loading
-    garbage.
+    **raises** ``ValueError`` if either set is non-empty — catching wrapper
+    prefix mismatches and model-vs-checkpoint architecture drift instead of
+    silently loading garbage.
     """
     ckpt = torch.load(ckpt_path, map_location=device or "cpu")
     state = ckpt.get("model_state", ckpt)
 
-    # Automatically adapt prefix mismatches (e.g., 'module.', 'model.' -> 'model.model.', etc.)
     model_keys = set(model.state_dict().keys())
     adapted_state = {}
     for k, v in state.items():
         if k in model_keys:
             adapted_state[k] = v
+        elif f"model.model.{k}" in model_keys:
+            adapted_state[f"model.model.{k}"] = v
         elif f"model.{k}" in model_keys:
             adapted_state[f"model.{k}"] = v
-        elif k.startswith("module.") and k[7:] in model_keys:
-            adapted_state[k[7:]] = v
-        elif k.startswith("model.") and k[6:] in model_keys:
-            adapted_state[k[6:]] = v
         elif k.startswith("model.model.") and k[6:] in model_keys:
             adapted_state[k[6:]] = v
+        elif k.startswith("model.") and k[6:] in model_keys:
+            adapted_state[k[6:]] = v
+        elif k.startswith("module.") and k[7:] in model_keys:
+            adapted_state[k[7:]] = v
         else:
             adapted_state[k] = v
 
     missing, unexpected = model.load_state_dict(adapted_state, strict=False)
-    unexpected = [k for k in unexpected if not k.startswith("loss_fn.")]
 
     if missing:
         raise ValueError(

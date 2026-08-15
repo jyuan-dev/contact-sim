@@ -1,5 +1,0 @@
-outs:
-- md5: 0993079db172546b1e527f1bd132bd7e
-  size: 4227786
-  hash: md5
-  path: deformable_savi_best.pt

@@ -91,9 +91,9 @@ class TestComputeFgARI(unittest.TestCase):
         self.assertGreaterEqual(ari, -1.0)
         self.assertLessEqual(ari, 1.0)
 
-    def test_6d_squeeze(self):
-        """Handles 6D input [B, T, K, 1, H, W] by squeezing channel dim."""
-        pred = torch.rand(2, 3, 4, 1, 32, 32)
+    def test_5d_input(self):
+        """Takes normalized 5D [B, T, K, H, W] masks (wrapper-owned squeeze)."""
+        pred = torch.rand(2, 3, 4, 32, 32)
         gt = torch.rand(2, 3, 3, 32, 32)
         ari = compute_fg_ari(pred, gt)
         self.assertIsInstance(ari, float)
@@ -121,17 +121,20 @@ class TestComputeLatentStd(unittest.TestCase):
 
 class TestComputeSIGRegStat(unittest.TestCase):
     def test_gaussian_slots(self):
-        """Slots sampled from N(0,I) should produce a low SIGReg stat."""
-        slots = torch.randn(200, 64)
+        """Slots sampled from N(0,I) should produce a low SIGReg stat.
+
+        One input convention: [B, T, K, D].
+        """
+        slots = torch.randn(200, 1, 1, 64)
         stat = compute_sigreg_stat(slots, sketch_dim=16)
         self.assertIsInstance(stat, float)
         # True Gaussian should give a fairly low stat (not exact due to finite samples)
         self.assertGreaterEqual(stat, 0.0)
 
-    def test_single_sample(self):
-        """Single sample should return 0.0 gracefully."""
-        stat = compute_sigreg_stat(torch.randn(1, 16))
-        self.assertAlmostEqual(stat, 0.0)
+    def test_single_batch_smoke(self):
+        """Small batch still produces a finite stat (no crash)."""
+        stat = compute_sigreg_stat(torch.randn(1, 4, 1, 16))
+        self.assertIsInstance(stat, float)
 
     def test_4d_input(self):
         """Accepts 4D input [B, T, K, D] by reshaping."""

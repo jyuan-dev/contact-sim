@@ -26,9 +26,6 @@ class MaskSegmentationLoss(nn.Module):
             device = post_masks.device if post_masks is not None else "cpu"
             return torch.tensor(0.0, device=device), {"mask_bce": 0.0, "mask_dice": 0.0}
 
-        if post_masks.ndim == 6 and post_masks.shape[3] == 1:
-            post_masks = post_masks.squeeze(3)  # [B, T, S, H, W]
-
         if gt_masks.ndim == 5:
             B, T, C, H, W = gt_masks.shape
             if post_masks.shape[-2:] != (H, W):

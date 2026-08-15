@@ -53,6 +53,7 @@ def build_dataset(cfg, split: str = 'train'):
         train_frac = merged_cfg.get('train_frac', 0.9)
         load_masks = merged_cfg.get('load_masks', False)
         preload_ram = merged_cfg.get('preload_ram', True)
+        include_goal_mask = merged_cfg.get('include_goal_mask', True)
 
         return PushTMaskHDF5Dataset(
             h5_path=h5_path,
@@ -64,6 +65,7 @@ def build_dataset(cfg, split: str = 'train'):
             seed=seed,
             load_masks=load_masks,
             preload_ram=preload_ram,
+            include_goal_mask=include_goal_mask,
         )
 
     elif 'gridshapes' in ds_name or 'grid_shapes' in ds_name:

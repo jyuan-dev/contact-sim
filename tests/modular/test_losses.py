@@ -111,19 +111,19 @@ class TestTemporalSlotContrastiveLossEdgeCases(unittest.TestCase):
         self.assertTrue(torch.is_tensor(weighted))
         self.assertGreater(raw, 0.0)
 
-    def test_dict_input_extracts_slots_fallback(self):
-        """Should fall back to 'slots' key if 'post_slots' is missing."""
+    def test_dict_input_missing_post_slots_raises(self):
+        """Strict contract: missing post_slots is loud, not a silent zero."""
         loss_fn = TemporalSlotContrastiveLoss(weight=1.0)
         out = {'slots': torch.randn(2, 3, 4, 32)}
-        weighted, raw = loss_fn(out)
-        self.assertTrue(torch.is_tensor(weighted))
+        with self.assertRaises(KeyError):
+            loss_fn(out)
 
-    def test_dict_input_no_slots_returns_zero(self):
-        """Dict with no slot keys should return zero loss."""
+    def test_dict_input_no_slots_raises(self):
+        """Dict with no slot keys raises KeyError (strict ModelOutput contract)."""
         loss_fn = TemporalSlotContrastiveLoss(weight=1.0)
         out = {'recon_img': torch.randn(2, 3, 64, 64)}
-        weighted, raw = loss_fn(out)
-        self.assertEqual(weighted.item(), 0.0)
+        with self.assertRaises(KeyError):
+            loss_fn(out)
 
     def test_temperature_scaling(self):
         """Lower temperature should produce higher loss (sharper contrast)."""

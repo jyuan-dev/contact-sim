@@ -35,13 +35,18 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
     def __init__(
         self,
         model: nn.Module,
-        weight_dict: dict | None = None,
         resolution: tuple = (64, 64),
     ) -> None:
         super().__init__()
         self.model = model
         self.resolution = resolution
-        self._weight_dict = weight_dict or {"slot_mse": 1.0}
+
+    def inner_savi(self):
+        """Return the Stage-1 StoSAVi core (typed accessor)."""
+        stage1 = getattr(self.model, "stage1_model", None)
+        if stage1 is None:
+            raise AttributeError(f"{type(self.model).__name__} has no stage1_model")
+        return stage1.model.model
 
     @classmethod
     def build(cls, model_cfg: dict) -> "StandardizedSlotFormerWrapper":
@@ -53,12 +58,7 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         if stage1_ckpt_path and not os.path.isabs(stage1_ckpt_path):
             stage1_ckpt_path = os.path.join(REPO_ROOT, stage1_ckpt_path)
 
-        stage1_model_type = model_cfg.get("stage1_model_type", "")
-        if not stage1_model_type:
-            if stage1_ckpt_path and "deformable" in stage1_ckpt_path.lower():
-                stage1_model_type = "deformable_savi"
-            else:
-                stage1_model_type = "savi"
+        stage1_model_type = model_cfg.get("stage1_model_type", "") or "savi"
 
         res = tuple(model_cfg.get("resolution", [64, 64]))
         stage1_cfg = {

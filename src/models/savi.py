@@ -1,106 +1,101 @@
-import os
-import sys
-import types
+"""
+SAVi (Slot Attention for Video) — native, self-contained implementation.
+
+Deterministic Slot Attention for Video, ported natively from the SlotFormer
+codebase so this project no longer depends on ``third_party/slotformer``.
+Supports optional BatchNorm regularization on the encoder output and on the
+slot residual update.
+
+Module layout (state-dict keys are pinned by existing checkpoints)::
+
+    SAVi (public wrapper)
+    └── model: StoSAVi
+        ├── encoder / encoder_pos_embedding / encoder_out_layer / [encoder_bn]
+        ├── init_latents / kernel_dist_layer / prior_slot_layer
+        ├── slot_attention [.residual_bn]
+        ├── decoder / decoder_pos_embedding
+        └── predictor (.base_predictor / .rnn / .out_projector)
+
+The core :class:`StoSAVi` exposes the API that rollout / slotformer / pidm /
+extract_slots rely on: ``encode``, ``decode``, ``_get_encoder_out``,
+``_sample_dist``, ``_reset_rnn``, ``kernel_dist_layer``, ``slot_attention``,
+``predictor``, ``init_latents``.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SLOTFORMER_DIR = os.path.join(REPO_ROOT, 'third_party', 'slotformer')
-BASE_SLOTS_DIR = os.path.join(SLOTFORMER_DIR, 'slotformer', 'base_slots')
 
-# ── One-time nerv shim setup ──────────────────────────────────────────────────
-_SAVI_SETUP_DONE = False
+# ── CNN / shape helpers ───────────────────────────────────────────────────────
 
-
-
-def _setup_savi_imports():
-    """
-    Set up synthetic 'nerv' module stubs and python path bindings.
-
-    This function creates in-memory mock modules for 'nerv' (nerv.training, nerv.models)
-    and adds third_party/slotformer to sys.path so that third-party StoSAVi can be
-    imported without editing third-party source files or installing external dependencies.
-    """
-    global _SAVI_SETUP_DONE
-    if _SAVI_SETUP_DONE:
-        return
-    _SAVI_SETUP_DONE = True
-
-    # Register fake nerv modules (needed by third_party/slotformer imports).
-    if 'nerv' not in sys.modules:
-        nerv_mod = types.ModuleType('nerv')
-
-        nerv_train = types.ModuleType('nerv.training')
-
-        class BaseModel(nn.Module):
-            def __init__(self, **kwargs):
-                super().__init__()
-
-        nerv_train.BaseModel = BaseModel
-
-        nerv_models = types.ModuleType('nerv.models')
-
-        def deconv_out_shape(in_size, stride=1, padding=0, kernel_size=1, output_padding=0):
-            if isinstance(in_size, (list, tuple)):
-                in_size = in_size[0]
-            return (in_size - 1) * stride - 2 * padding + kernel_size + output_padding
-
-        def _make_conv_norm_act(conv_cls, in_channels, out_channels, kernel_size,
-                                 stride=1, padding=0, output_padding=0, norm='', act='relu'):
-            layers = [conv_cls(in_channels, out_channels, kernel_size,
-                               stride=stride, padding=padding,
-                               **({'output_padding': output_padding} if conv_cls is nn.ConvTranspose2d else {}))]
-            if act == 'relu':
-                layers.append(nn.ReLU(inplace=True))
-            return nn.Sequential(*layers)
-
-        def conv_norm_act(in_channels, out_channels, kernel_size=5, stride=1,
-                          padding=None, norm='', act='relu'):
-            if padding is None:
-                padding = kernel_size // 2
-            return _make_conv_norm_act(nn.Conv2d, in_channels, out_channels, kernel_size,
-                                       stride=stride, padding=padding, norm=norm, act=act)
-
-        def deconv_norm_act(in_channels, out_channels, kernel_size=5, stride=1,
-                            padding=None, output_padding=None, norm='', act='relu'):
-            if padding is None:
-                padding = kernel_size // 2
-            if output_padding is None:
-                output_padding = stride - 1
-            return _make_conv_norm_act(nn.ConvTranspose2d, in_channels, out_channels, kernel_size,
-                                       stride=stride, padding=padding,
-                                       output_padding=output_padding, norm=norm, act=act)
-
-        nerv_models.deconv_out_shape = deconv_out_shape
-        nerv_models.conv_norm_act = conv_norm_act
-        nerv_models.deconv_norm_act = deconv_norm_act
-
-        sys.modules['nerv'] = nerv_mod
-        sys.modules['nerv.training'] = nerv_train
-        sys.modules['nerv.models'] = nerv_models
-
-    # Ensure the slotformer base_slots directory is importable.
-    if BASE_SLOTS_DIR not in sys.path:
-        sys.path.insert(0, BASE_SLOTS_DIR)
+def deconv_out_shape(in_size, stride=1, padding=0, kernel_size=1, output_padding=0):
+    if isinstance(in_size, (list, tuple)):
+        in_size = in_size[0]
+    return (in_size - 1) * stride - 2 * padding + kernel_size + output_padding
 
 
-_setup_savi_imports()
+def conv_norm_act(in_channels, out_channels, kernel_size=5, stride=1,
+                  padding=None, act='relu'):
+    if padding is None:
+        padding = kernel_size // 2
+    layers = [nn.Conv2d(in_channels, out_channels, kernel_size,
+                        stride=stride, padding=padding)]
+    if act == 'relu':
+        layers.append(nn.ReLU(inplace=True))
+    return nn.Sequential(*layers)
 
 
-# Clear stale 'models' package so `from models.savi import StoSAVi` resolves
-# to third_party/slotformer/slotformer/base_slots/models/savi.py.
-for k in list(sys.modules.keys()):
-    if k == 'models' or k.startswith('models.'):
-        del sys.modules[k]
+def deconv_norm_act(in_channels, out_channels, kernel_size=5, stride=1,
+                    padding=None, output_padding=None, act='relu'):
+    if padding is None:
+        padding = kernel_size // 2
+    if output_padding is None:
+        output_padding = stride - 1
+    layers = [nn.ConvTranspose2d(in_channels, out_channels, kernel_size,
+                                 stride=stride, padding=padding,
+                                 output_padding=output_padding)]
+    if act == 'relu':
+        layers.append(nn.ReLU(inplace=True))
+    return nn.Sequential(*layers)
 
-from models.savi import StoSAVi
+
+def assert_shape(actual, expected, message=""):
+    assert list(actual) == list(expected), \
+        f"Expected shape: {expected} but passed shape: {actual}. {message}"
 
 
-class SlotAttentionWithBN(nn.Module):
-    """
-    Slot attention module with optional BatchNorm at the end of the residual update.
-    """
+# ── Position embedding ────────────────────────────────────────────────────────
+
+def build_grid(resolution):
+    """Return a coordinate grid with shape [1, H, W, 4]."""
+    ranges = [torch.linspace(0.0, 1.0, steps=res) for res in resolution]
+    grid = torch.meshgrid(*ranges, indexing='ij')
+    grid = torch.stack(grid, dim=-1)
+    grid = torch.reshape(grid, [resolution[0], resolution[1], -1])
+    grid = grid.unsqueeze(0)
+    return torch.cat([grid, 1.0 - grid], dim=-1)
+
+
+class SoftPositionEmbed(nn.Module):
+    """Add a learned embedding of normalized coordinates to a feature map."""
+
+    def __init__(self, hidden_size, resolution):
+        super().__init__()
+        self.dense = nn.Linear(in_features=4, out_features=hidden_size)
+        self.register_buffer('grid', build_grid(resolution))  # [1, H, W, 4]
+
+    def forward(self, inputs):
+        """inputs: [B, C, H, W]."""
+        emb_proj = self.dense(self.grid).permute(0, 3, 1, 2)
+        return inputs + emb_proj
+
+
+# ── Slot attention ────────────────────────────────────────────────────────────
+
+class SlotAttention(nn.Module):
+    """Slot attention module that iteratively performs cross-attention,
+    with optional BatchNorm on the end of each residual update."""
 
     def __init__(
         self,
@@ -110,7 +105,7 @@ class SlotAttentionWithBN(nn.Module):
         slot_size: int,
         mlp_hidden_size: int,
         eps: float = 1e-6,
-        use_residual_bn: bool = True,
+        use_residual_bn: bool = False,
     ):
         super().__init__()
         self.in_features = in_features
@@ -140,16 +135,16 @@ class SlotAttentionWithBN(nn.Module):
             nn.ReLU(),
             nn.Linear(self.mlp_hidden_size, self.slot_size),
         )
-        if self.use_residual_bn:
-            self.residual_bn = nn.BatchNorm1d(self.slot_size)
-        else:
-            self.residual_bn = None
+        self.residual_bn = nn.BatchNorm1d(self.slot_size) if use_residual_bn else None
 
     def forward(self, inputs: torch.Tensor, slots: torch.Tensor) -> torch.Tensor:
+        """`inputs`: [B, N, C] flattened per-pixel features,
+        `slots`: [B, num_slots, C] slot inits."""
         bs, num_inputs, inputs_size = inputs.shape
+        assert len(slots.shape) == 3
         inputs = self.norm_inputs(inputs)
-        k = self.project_k(inputs)
-        v = self.project_v(inputs)
+        k = self.project_k(inputs)  # [B, num_inputs, slot_size]
+        v = self.project_v(inputs)  # [B, num_inputs, slot_size]
 
         for _ in range(self.num_iterations):
             slots_prev = slots
@@ -165,9 +160,7 @@ class SlotAttentionWithBN(nn.Module):
                 slots_prev.view(bs * self.num_slots, self.slot_size),
             )
             slots = slots.view(bs, self.num_slots, self.slot_size)
-
-            res = self.mlp(slots)
-            slots = slots + res
+            slots = slots + self.mlp(slots)
             if self.residual_bn is not None:
                 slots = self.residual_bn(slots.view(bs * self.num_slots, self.slot_size)).view(
                     bs, self.num_slots, self.slot_size
@@ -184,14 +177,363 @@ class SlotAttentionWithBN(nn.Module):
         return self.project_k.weight.device
 
 
+# Backward-compatible alias pinned by tests/modular/test_savi_bn.py.
+SlotAttentionWithBN = SlotAttention
+
+
+# ── Slot transition predictors ────────────────────────────────────────────────
+
+class TransformerPredictor(nn.Module):
+    """Transformer encoder modeling interaction between slots."""
+
+    def __init__(
+        self,
+        d_model=128,
+        num_layers=1,
+        num_heads=4,
+        ffn_dim=256,
+        norm_first=True,
+    ):
+        super().__init__()
+        transformer_enc_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=num_heads,
+            dim_feedforward=ffn_dim,
+            norm_first=norm_first,
+            batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(
+            encoder_layer=transformer_enc_layer, num_layers=num_layers)
+
+    def forward(self, x):
+        return self.transformer_encoder(x)
+
+
+class RNNPredictorWrapper(nn.Module):
+    """Predictor wrapped in an LSTM for sequential scene dynamics."""
+
+    def __init__(
+        self,
+        base_predictor,
+        input_size=128,
+        hidden_size=256,
+        num_layers=1,
+    ):
+        super().__init__()
+        self.base_predictor = base_predictor
+        self.rnn = nn.LSTM(input_size=input_size, hidden_size=hidden_size,
+                           num_layers=num_layers)
+        self.out_projector = nn.Linear(hidden_size, input_size)
+        self.hidden_state = None
+
+    def forward(self, x):
+        out = self.base_predictor(x)
+        out_shape = out.shape
+        # Re-pack cuDNN weights after optimizer steps (cheap no-op when fresh).
+        self.rnn.flatten_parameters()
+        out, self.hidden_state = self.rnn(
+            out.view(1, -1, out_shape[-1]), self.hidden_state)
+        return self.out_projector(out[0]).view(out_shape)
+
+    def reset(self):
+        """Clear the LSTM hidden state."""
+        self.hidden_state = None
+
+
+# ── Core SAVi model ───────────────────────────────────────────────────────────
+
+class StoSAVi(nn.Module):
+    """Deterministic Slot Attention for Video (native port of SlotFormer's StoSAVi)."""
+
+    def __init__(
+        self,
+        resolution,
+        clip_len,
+        slot_dict=None,
+        enc_dict=None,
+        dec_dict=None,
+        pred_dict=None,
+        loss_dict=None,  # accepted for config compatibility; unused (deterministic SAVi)
+        use_encoder_bn: bool = False,
+        use_residual_bn: bool = False,
+        eps=1e-6,
+    ):
+        super().__init__()
+        slot_dict = dict(
+            num_slots=7,
+            slot_size=128,
+            slot_mlp_size=256,
+            num_iterations=2,
+        ) | (slot_dict or {})
+        enc_dict = dict(
+            enc_channels=(3, 64, 64, 64, 64),
+            enc_ks=5,
+            enc_out_channels=128,
+        ) | (enc_dict or {})
+        dec_dict = dict(
+            dec_channels=(128, 64, 64, 64, 64),
+            dec_resolution=(8, 8),
+            dec_ks=5,
+        ) | (dec_dict or {})
+        pred_dict = dict(
+            pred_rnn=True,
+            pred_norm_first=True,
+            pred_num_layers=2,
+            pred_num_heads=4,
+            pred_ffn_dim=512,
+        ) | (pred_dict or {})
+
+        self.resolution = resolution
+        self.clip_len = clip_len
+        self.eps = eps
+        self.use_encoder_bn = use_encoder_bn
+        self.use_residual_bn = use_residual_bn
+
+        self._build_slot_attention(slot_dict, enc_dict)
+        self._build_encoder(enc_dict)
+        self._build_decoder(dec_dict)
+        self._build_predictor(pred_dict)
+
+    def _build_slot_attention(self, slot_dict, enc_dict):
+        self.enc_out_channels = enc_dict['enc_out_channels']
+        self.num_slots = slot_dict['num_slots']
+        self.slot_size = slot_dict['slot_size']
+        self.slot_mlp_size = slot_dict['slot_mlp_size']
+        self.num_iterations = slot_dict['num_iterations']
+
+        # Learnable per-slot initialization.
+        self.init_latents = nn.Parameter(
+            nn.init.normal_(torch.empty(1, self.num_slots, self.slot_size)))
+
+        # Predicts the (mu, log-var) of the SA input "kernels"; the
+        # deterministic model samples mu only (see `_sample_dist`).
+        self.kernel_dist_layer = nn.Sequential(
+            nn.Linear(self.slot_size, self.slot_size * 2),
+            nn.LayerNorm(self.slot_size * 2),
+            nn.ReLU(),
+            nn.Linear(self.slot_size * 2, self.slot_size * 2),
+        )
+
+        # Unused; kept for state-dict compatibility with pre-trained weights.
+        self.prior_slot_layer = nn.Sequential(
+            nn.Linear(self.slot_size, self.slot_size),
+            nn.LayerNorm(self.slot_size),
+            nn.ReLU(),
+            nn.Linear(self.slot_size, self.slot_size),
+        )
+
+        self.slot_attention = SlotAttention(
+            in_features=self.enc_out_channels,
+            num_iterations=self.num_iterations,
+            num_slots=self.num_slots,
+            slot_size=self.slot_size,
+            mlp_hidden_size=self.slot_mlp_size,
+            eps=self.eps,
+            use_residual_bn=self.use_residual_bn,
+        )
+
+    def _build_encoder(self, enc_dict):
+        self.enc_channels = list(enc_dict['enc_channels'])  # CNN channels
+        self.enc_ks = enc_dict['enc_ks']  # kernel size in CNN
+        self.visual_resolution = (64, 64)  # CNN out visual resolution
+        self.visual_channels = self.enc_channels[-1]  # CNN out visual channels
+
+        enc_layers = len(self.enc_channels) - 1
+        self.encoder = nn.Sequential(*[
+            conv_norm_act(
+                self.enc_channels[i],
+                self.enc_channels[i + 1],
+                kernel_size=self.enc_ks,
+                # 2x downsampling when training on 128x128 images
+                stride=2 if (i == 0 and self.resolution[0] == 128) else 1,
+                act='relu' if i != (enc_layers - 1) else '',
+            )
+            for i in range(enc_layers)
+        ])
+
+        self.encoder_pos_embedding = SoftPositionEmbed(self.visual_channels,
+                                                       self.visual_resolution)
+        self.encoder_out_layer = nn.Sequential(
+            nn.LayerNorm(self.visual_channels),
+            nn.Linear(self.visual_channels, self.enc_out_channels),
+            nn.ReLU(),
+            nn.Linear(self.enc_out_channels, self.enc_out_channels),
+        )
+        self.encoder_bn = nn.BatchNorm1d(self.enc_out_channels) if self.use_encoder_bn else None
+
+    def _build_decoder(self, dec_dict):
+        self.dec_channels = dec_dict['dec_channels']  # CNN channels
+        self.dec_resolution = dec_dict['dec_resolution']  # broadcast size
+        self.dec_ks = dec_dict['dec_ks']  # kernel size
+        assert self.dec_channels[0] == self.slot_size, \
+            'wrong in_channels for Decoder'
+
+        modules = []
+        out_size = self.dec_resolution[0]
+        stride = 2
+        for i in range(len(self.dec_channels) - 1):
+            if out_size == self.resolution[0]:
+                stride = 1
+            modules.append(
+                deconv_norm_act(
+                    self.dec_channels[i],
+                    self.dec_channels[i + 1],
+                    kernel_size=self.dec_ks,
+                    stride=stride,
+                    act='relu'))
+            out_size = deconv_out_shape(out_size, stride, self.dec_ks // 2,
+                                        self.dec_ks, stride - 1)
+
+        assert_shape(
+            self.resolution,
+            (out_size, out_size),
+            message="Output shape of decoder did not match input resolution. "
+            "Try changing `decoder_resolution`.",
+        )
+
+        # Output conv for RGB and segmentation mask.
+        modules.append(
+            nn.Conv2d(
+                self.dec_channels[-1], 4, kernel_size=1, stride=1, padding=0))
+
+        self.decoder = nn.Sequential(*modules)
+        self.decoder_pos_embedding = SoftPositionEmbed(self.slot_size,
+                                                       self.dec_resolution)
+
+    def _build_predictor(self, pred_dict):
+        """Predictor transitioning slots from time t to t+1:
+        Transformer (object interaction) wrapped in LSTM (scene dynamics)."""
+        self.predictor = TransformerPredictor(
+            self.slot_size,
+            pred_dict['pred_num_layers'],
+            pred_dict['pred_num_heads'],
+            pred_dict['pred_ffn_dim'],
+            norm_first=pred_dict['pred_norm_first'],
+        )
+        if pred_dict['pred_rnn']:
+            self.predictor = RNNPredictorWrapper(
+                self.predictor,
+                self.slot_size,
+                self.slot_mlp_size,
+                num_layers=1,
+            )
+
+    def _sample_dist(self, dist):
+        """Deterministic sampling: return the mean half of (mu, log-var)."""
+        assert dist.shape[-1] == self.slot_size * 2
+        return dist[..., :self.slot_size]
+
+    def _get_encoder_out(self, img):
+        """Encode image, add pos embed, project, optionally BatchNorm.
+
+        `img`: [B, C, H, W] -> [B, H*W, enc_out_channels].
+        """
+        encoder_out = self.encoder(img).type(self.dtype)
+        encoder_out = self.encoder_pos_embedding(encoder_out)
+        encoder_out = torch.flatten(encoder_out, start_dim=2, end_dim=3)
+        encoder_out = encoder_out.permute(0, 2, 1).contiguous()
+        encoder_out = self.encoder_out_layer(encoder_out)
+        if self.encoder_bn is not None:
+            B, HW, C = encoder_out.shape
+            encoder_out = self.encoder_bn(encoder_out.view(B * HW, C)).view(B, HW, C)
+        return encoder_out
+
+    def encode(self, img, prev_slots=None):
+        """Encode a clip to post-slots.
+
+        Returns (post_slots [B, T, num_slots, slot_size],
+                 encoder_out [B, T, H*W, enc_out_channels]).
+        """
+        B, T, C, H, W = img.shape
+        encoder_out = self._get_encoder_out(img.flatten(0, 1))
+        encoder_out = encoder_out.unflatten(0, (B, T))
+
+        # Apply slot attention per frame, reusing slots across time. The
+        # predictor is called exactly once per slot transition — no trailing
+        # call — so chained encodes (rollout.py's two-phase pattern) evolve
+        # the RNN identically to a single full-clip encode.
+        if prev_slots is None:
+            latents = self.init_latents.expand(B, -1, -1)
+        all_post_slots = []
+        for idx in range(T):
+            if prev_slots is not None:
+                latents = self.predictor(prev_slots)
+            kernels = self._sample_dist(self.kernel_dist_layer(latents))
+            post_slots = self.slot_attention(encoder_out[:, idx], kernels)
+            all_post_slots.append(post_slots)
+            prev_slots = post_slots
+
+        return torch.stack(all_post_slots, dim=1), encoder_out
+
+    def _reset_rnn(self):
+        self.predictor.reset()
+
+    def forward(self, data_dict):
+        """Forward pass. `data_dict['img']`: [B, T, C, H, W]."""
+        return self._forward(data_dict['img'], None)
+
+    def _forward(self, img, prev_slots=None):
+        if prev_slots is None:
+            self._reset_rnn()
+
+        B, T = img.shape[:2]
+        post_slots, encoder_out = self.encode(img, prev_slots=prev_slots)
+
+        out_dict = {
+            'post_slots': post_slots,  # [B, T, num_slots, C]
+            'img': img,  # [B, T, 3, H, W]
+        }
+        post_recon_img, post_recons, post_masks, _ = \
+            self.decode(post_slots.flatten(0, 1))
+        out_dict.update({
+            'post_recon_combined': post_recon_img.unflatten(0, (B, T)),
+            'post_recons': post_recons.unflatten(0, (B, T)),
+            'post_masks': post_masks.unflatten(0, (B, T)),
+        })
+        return out_dict
+
+    def decode(self, slots):
+        """Decode slots to reconstructed images and masks.
+
+        `slots`: [B, num_slots, slot_size].
+        """
+        bs, num_slots, slot_size = slots.shape
+        height, width = self.resolution
+        num_channels = 3
+
+        # Spatial broadcast.
+        decoder_in = slots.view(bs * num_slots, slot_size, 1, 1)
+        decoder_in = decoder_in.repeat(1, 1, self.dec_resolution[0],
+                                       self.dec_resolution[1])
+
+        out = self.decoder_pos_embedding(decoder_in)
+        out = self.decoder(out)
+        # `out` has shape: [B*num_slots, 4, H, W].
+
+        out = out.view(bs, num_slots, num_channels + 1, height, width)
+        recons = out[:, :, :num_channels, :, :]  # [B, num_slots, 3, H, W]
+        masks = out[:, :, -1:, :, :]
+        masks = F.softmax(masks, dim=1)  # [B, num_slots, 1, H, W]
+        recon_combined = torch.sum(recons * masks, dim=1)  # [B, 3, H, W]
+        return recon_combined, recons, masks, slots
+
+    @property
+    def dtype(self):
+        return self.init_latents.dtype
+
+    @property
+    def device(self):
+        return self.init_latents.device
+
+
+# ── Public wrapper ────────────────────────────────────────────────────────────
+
 class SAVi(nn.Module):
     """
-    Standard SAVi (Slot Attention for Video) model wrapper.
-    Instantiates StoSAVi with deterministic or stochastic slot attention defaults,
-    with optional BatchNorm on the encoder output and slot residual updates.
+    Standard deterministic SAVi model wrapper.
 
-    Accepts either flat kwargs or nested third-party dicts for slot/enc/dec/pred/loss
-    config. Flat kwargs serve as defaults; nested dicts take precedence when provided.
+    Thin wrapper around the native :class:`StoSAVi` core. Accepts flat kwargs
+    or nested dicts for the slot/enc/dec/pred configs — flat kwargs act as
+    defaults, nested dicts take precedence when provided.
     """
 
     def __init__(
@@ -209,49 +551,38 @@ class SAVi(nn.Module):
         dec_dict=None,
         pred_dict=None,
         loss_dict=None,
-        **kwargs,
     ):
         super().__init__()
         self.resolution = tuple(resolution)
-        self.use_encoder_bn = kwargs.pop("use_encoder_bn", use_encoder_bn) or kwargs.pop("use_bn", False)
-        self.use_residual_bn = kwargs.pop("use_residual_bn", use_residual_bn) or kwargs.pop("use_bn", False)
+        self.use_encoder_bn = use_encoder_bn
+        self.use_residual_bn = use_residual_bn
 
         slot_dict = dict(
             num_slots=num_slots,
             slot_size=slot_dim,
             slot_mlp_size=slot_dim * 2,
             num_iterations=num_iterations,
-            kernel_mlp=True,
         ) | (slot_dict or {})
 
         enc_dict = dict(
             enc_channels=(in_channels, 64, 64, 64, 64),
             enc_ks=5,
             enc_out_channels=slot_dim,
-            enc_norm='',
         ) | (enc_dict or {})
 
         dec_dict = dict(
             dec_channels=(slot_dim, 64, 64, 64, 64),
             dec_resolution=(8, 8),
             dec_ks=5,
-            dec_norm='',
         ) | (dec_dict or {})
 
         pred_dict = dict(
-            pred_type='transformer',
             pred_rnn=True,
             pred_norm_first=True,
             pred_num_layers=2,
             pred_num_heads=4,
             pred_ffn_dim=256,
-            pred_sg_every=None,
         ) | (pred_dict or {})
-
-        loss_dict = dict(
-            use_post_recon_loss=True,
-            kld_method='none',
-        ) | (loss_dict or {})
 
         self.model = StoSAVi(
             resolution=self.resolution,
@@ -261,43 +592,21 @@ class SAVi(nn.Module):
             dec_dict=dec_dict,
             pred_dict=pred_dict,
             loss_dict=loss_dict,
+            use_encoder_bn=use_encoder_bn,
+            use_residual_bn=use_residual_bn,
         )
-        # Bind dynamic dtype property to third-party StoSAVi instance
-        type(self.model).dtype = property(lambda self: next(self.parameters()).dtype)
 
-        # ── Optional BatchNorm at the end of slot residual ───────────────────
-        if self.use_residual_bn:
-            self.model.slot_attention = SlotAttentionWithBN(
-                in_features=slot_dim,
-                num_iterations=num_iterations,
-                num_slots=num_slots,
-                slot_size=slot_dim,
-                mlp_hidden_size=slot_dict.get("slot_mlp_size", slot_dim * 2),
-                use_residual_bn=True,
-            )
-
-        # ── Optional BatchNorm at the end of encoder ─────────────────────────
-        if self.use_encoder_bn:
-            self.encoder_bn = nn.BatchNorm1d(slot_dim)
-            self.model.encoder_bn = self.encoder_bn
-            orig_get_encoder_out = self.model._get_encoder_out
-
-            def _bn_get_encoder_out(img):
-                enc_out = orig_get_encoder_out(img)  # [B, HW, enc_out_channels]
-                B, HW, C = enc_out.shape
-                enc_out = self.encoder_bn(enc_out.view(B * HW, C)).view(B, HW, C)
-                return enc_out
-
-            self.model._get_encoder_out = _bn_get_encoder_out
-        else:
-            self.encoder_bn = None
+    @property
+    def encoder_bn(self):
+        return self.model.encoder_bn
 
     @property
     def dtype(self):
-        return next(self.parameters()).dtype
+        return self.model.dtype
 
     def load_state_dict(self, state_dict, strict=True):
-        """Handle state dict loading for both direct StoSAVi state dicts and wrapper state dicts."""
+        """Handle state dicts for both the wrapper ('model.'-prefixed keys)
+        and the bare core model."""
         if any(k.startswith('model.') for k in state_dict.keys()):
             return super().load_state_dict(state_dict, strict=strict)
         return self.model.load_state_dict(state_dict, strict=strict)
@@ -307,4 +616,3 @@ class SAVi(nn.Module):
         if isinstance(x, torch.Tensor):
             x = {'img': x}
         return self.model(x)
-

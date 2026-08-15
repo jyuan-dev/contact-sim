@@ -18,6 +18,8 @@ sys.path.insert(0, REPO_ROOT)
 from src.models.factory import build_model
 from src.datasets.factory import build_dataset
 from src.utils.training_utils import get_device
+from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
+from src.utils.data_utils import find_dataset_path
 
 
 import argparse
@@ -32,51 +34,18 @@ def extract_all_slots(
     device = get_device("cuda")
     print(f"Loading Stage 1 SAVi model from: {savi_ckpt_path}")
 
-    # Discover training config or build model
-    ckpt_dir = os.path.dirname(os.path.abspath(savi_ckpt_path))
-    config_candidates = [
-        os.path.join(ckpt_dir, "config.yaml"),
-        os.path.join(ckpt_dir, ".hydra", "config.yaml"),
-    ]
-    saved_cfg = None
-    for cand in config_candidates:
-        if os.path.exists(cand):
-            try:
-                from omegaconf import OmegaConf
-                saved_cfg = OmegaConf.load(cand)
-                print(f"[Auto-Config] Loaded Stage 1 training config from: {cand}")
-                break
-            except Exception:
-                pass
-
-    if saved_cfg is not None:
-        cfg_dict = OmegaConf.to_container(saved_cfg, resolve=True)
-    else:
-        cfg_dict = {
-            "model": {
-                "name": "savi",
-                "type": "savi",
-                "num_slots": 4,
-                "slot_dim": 64,
-                "in_channels": 3,
-                "resolution": [64, 64],
-            }
-        }
-
-    savi_model = build_model(cfg_dict).to(device)
+    savi_model, cfg_dict = bootstrap_checkpoint(savi_ckpt_path)
+    savi_model = savi_model.to(device)
     load_checkpoint_state(savi_model, savi_ckpt_path, device=device)
     savi_model.eval()
 
     # Get inner savi
-    if hasattr(savi_model, "model"):
-        inner_savi = savi_model.model
-    else:
-        inner_savi = savi_model
+    inner_savi = savi_model.inner_savi()
 
     # Build dataset
     ds_cfg = {
         "name": "pusht",
-        "h5_path": "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5",
+        "h5_path": find_dataset_path(None),
         "n_sample_frames": 6,
         "load_masks": False,
         "preload_ram": True,
@@ -98,32 +67,12 @@ def extract_all_slots(
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Extracting Slots"):
             video = batch["img"].to(device, non_blocking=True)  # [B, T, C, H, W]
-            B, T, C, H, W = video.shape
 
             if hasattr(inner_savi, "_reset_rnn"):
                 inner_savi._reset_rnn()
 
-            video_flat = video.flatten(0, 1)  # [B*T, C, H, W]
-            enc_out_all = inner_savi._get_encoder_out(video_flat).unflatten(0, (B, T))
-
-            init_latents = inner_savi.init_latents.repeat(B, 1, 1)
-            prev_slots = None
-            clip_slots = []
-
-            for t in range(T):
-                enc_out_t = enc_out_all[:, t]
-                if prev_slots is None:
-                    latents = init_latents
-                else:
-                    latents = inner_savi.predictor(prev_slots)
-
-                kernel_dist = inner_savi.kernel_dist_layer(latents)
-                kernels = inner_savi._sample_dist(kernel_dist)
-                post_slots = inner_savi.slot_attention(enc_out_t, kernels)
-                clip_slots.append(post_slots.half().cpu())  # Save as FP16 on CPU
-                prev_slots = post_slots
-
-            batch_slots = torch.stack(clip_slots, dim=1)  # [B, T, K, D] in FP16
+            post_slots, _ = inner_savi.encode(video)
+            batch_slots = post_slots.half().cpu()  # [B, T, K, D] in FP16
             all_slots_list.append(batch_slots)
 
     all_slots_tensor = torch.cat(all_slots_list, dim=0)  # [N, T, K, D]

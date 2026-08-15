@@ -25,5 +25,3 @@ slots_pe: ""
 loss_decay_factor: 1.0
 use_img_recon_loss: false
 
-weight_dict:
-  slot_mse: 1.0

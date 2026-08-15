@@ -12,6 +12,39 @@ import torch
 import torch.nn as nn
 
 
+def compute_sigreg_statistic(z, num_proj, knots=17, t_max=3.0, seed=None):
+    """
+    Per-slot Epps-Pulley ECF statistic — the single SIGReg core.
+
+    One input convention: slot latents ``[B, T, K, D]``. Returns the per-slot
+    statistic as a ``(K,)`` tensor (lower = closer to N(0, I)). ``seed`` pins
+    the random projections for reproducibility (metrics / tests); ``None``
+    resamples them per call.
+    """
+    B, T, K, D = z.shape
+    proj = z.float().permute(2, 1, 0, 3)  # (K, T, B, D)
+
+    t = torch.linspace(0, t_max, knots, dtype=torch.float32, device=z.device)
+    dt = t_max / (knots - 1)
+    weights = torch.full((knots,), 2 * dt, dtype=torch.float32, device=z.device)
+    weights[[0, -1]] = dt
+    phi = torch.exp(-t.square() / 2.0)
+
+    # Sample random unit projections
+    generator = None
+    if seed is not None:
+        generator = torch.Generator(device=z.device).manual_seed(seed)
+    A = torch.randn(D, num_proj, device=z.device, generator=generator)
+    A = A / A.norm(p=2, dim=0).clamp_min(1e-8)
+
+    # Epps-Pulley empirical characteristic function statistic
+    x_t = (proj @ A).unsqueeze(-1) * t  # (K, T, B, num_proj, knots)
+    err = (x_t.cos().mean(-3) - phi).square() + x_t.sin().mean(-3).square()  # (K, T, num_proj, knots)
+    statistic = (err @ (weights * phi)) * B  # (K, T, num_proj)
+
+    return statistic.mean(dim=(-2, -1))  # (K,) - mean over time and projections
+
+
 class SIGRegLoss(nn.Module):
     """
     Sketched Isotropic Gaussian Regularizer for Slot Latents [B, T, K, D].
@@ -26,50 +59,29 @@ class SIGRegLoss(nn.Module):
         num_proj: int = 1024,
         knots: int = 17,
         t_max: float = 3.0,
+        seed: int | None = None,
     ):
         super().__init__()
         self.weight = weight
         self.num_proj = num_proj
-        t = torch.linspace(0, t_max, knots, dtype=torch.float32)
-        dt = t_max / (knots - 1)
-        weights = torch.full((knots,), 2 * dt, dtype=torch.float32)
-        weights[[0, -1]] = dt
-        window = torch.exp(-t.square() / 2.0)
-        # persistent=False: deterministic quadrature constants, excluded from
-        # state_dict(). Otherwise the wrapper's state_dict gains loss-buffer
-        # keys that train.py's _save_checkpoint (inner-model state) never
-        # saves, and load_checkpoint_state's strict key check rejects the
-        # checkpoint as "missing" those keys.
-        self.register_buffer("t", t, persistent=False)
-        self.register_buffer("phi", window, persistent=False)
-        self.register_buffer("weights", weights * window, persistent=False)
+        self.knots = knots
+        self.t_max = t_max
+        self.seed = seed
 
     def forward(self, out, batch=None):
         if isinstance(out, dict):
-            z = out.get("post_slots", out.get("slots", out.get("z")))
+            z = out["post_slots"]
         else:
             z = out
 
         if z is None or not torch.is_tensor(z) or z.numel() == 0:
             return torch.tensor(0.0), {"sigreg_loss": 0.0}
 
-        # Canonical slot latents (B, T, K, D) -> (K, T, B, D)
-        B, T, K, D = z.shape
-        proj = z.float().permute(2, 1, 0, 3)  # (K, T, B, D)
-
-        if B < 2:
+        if z.ndim != 4 or z.shape[0] < 2:
             return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
 
-        # Sample random unit projections
-        A = torch.randn(D, self.num_proj, device=z.device)
-        A = A / A.norm(p=2, dim=0).clamp_min(1e-8)
-
-        # Compute Epps-Pulley empirical characteristic function statistic
-        x_t = (proj @ A).unsqueeze(-1) * self.t  # (K, T, B, num_proj, knots)
-        err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()  # (K, T, num_proj, knots)
-        statistic = (err @ self.weights) * B  # (K, T, num_proj)
-
-        per_slot = statistic.mean(dim=(-2, -1))  # (K,) - average over time T and projections
+        per_slot = compute_sigreg_statistic(
+            z, self.num_proj, knots=self.knots, t_max=self.t_max, seed=self.seed)
         raw_loss = per_slot.mean()
         if torch.isnan(raw_loss) or torch.isinf(raw_loss):
             return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
@@ -78,7 +90,7 @@ class SIGRegLoss(nn.Module):
 
         # Per-slot diagnostic breakdown
         info = {"sigreg_loss": raw_loss.item()}
-        for k in range(K):
+        for k in range(z.shape[2]):
             info[f"sigreg_slot{k}"] = per_slot[k].item()
 
         return weighted_loss, info

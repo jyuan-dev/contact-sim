@@ -23,6 +23,8 @@ from src.models.factory import build_model
 from src.models.rollout import predict_slot_rollout
 from src.datasets import DeterministicEpisodeEvalDataset
 from src.utils.vis_utils import render_slot_overlay_frame, save_frames_to_gif
+from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
+from src.utils.data_utils import find_dataset_path
 
 
 def run_full_sequence_rollout(
@@ -47,9 +49,8 @@ def run_full_sequence_rollout(
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    h5_path = "/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5"
     eval_dataset = DeterministicEpisodeEvalDataset(
-        h5_path=h5_path,
+        h5_path=find_dataset_path(None),
         split="val",
         resolution=(64, 64),
         n_sample_frames=n_sample_frames,
@@ -58,56 +59,9 @@ def run_full_sequence_rollout(
     )
     val_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
-    # Auto-discover training config snapshot if available
-    ckpt_dir = os.path.dirname(ckpt_path)
-    config_candidates = [
-        os.path.join(ckpt_dir, "config.yaml"),
-        os.path.join(ckpt_dir, ".hydra", "config.yaml"),
-    ]
-    saved_cfg = None
-    for cand in config_candidates:
-        if os.path.exists(cand):
-            try:
-                from omegaconf import OmegaConf
-                saved_cfg = OmegaConf.load(cand)
-                print(f"[Auto-Config] Loaded training configuration from: {cand}")
-                break
-            except Exception as e:
-                pass
-
-    if saved_cfg is not None:
-        cfg = OmegaConf.to_container(saved_cfg, resolve=True)
-    else:
-        ckpt = torch.load(ckpt_path, map_location="cpu")
-        state_dict = ckpt.get("model_state", ckpt)
-        
-        d_model = 128
-        ffn_dim = 512
-        num_layers = 4
-        for k, v in state_dict.items():
-            if "rollouter.in_proj.weight" in k:
-                d_model = v.shape[0]
-            elif "rollouter.transformer_encoder.layers.0.linear1.weight" in k:
-                ffn_dim = v.shape[0]
-            elif "rollouter.transformer_encoder.layers." in k:
-                parts = k.split(".")
-                for p in parts:
-                    if p.isdigit():
-                        num_layers = max(num_layers, int(p) + 1)
-
-        cfg = {
-            "model": {
-                "name": "slotformer",
-                "type": "slotformer",
-                "d_model": d_model,
-                "num_layers": num_layers,
-                "num_heads": 8,
-                "ffn_dim": ffn_dim,
-                "stage1_ckpt_path": "scratch/checkpoints/savi_pusht/savi_best.pt",
-            }
-        }
-
-    model = build_model(cfg).to(device)
+    # Reconstruct the experiment from the checkpoint
+    model, cfg = bootstrap_checkpoint(ckpt_path)
+    model = model.to(device)
     from src.utils.training_utils import load_checkpoint_state
     load_checkpoint_state(model, ckpt_path, device=device)
     model.eval()

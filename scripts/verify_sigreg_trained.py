@@ -27,17 +27,17 @@ sys.path.insert(0, REPO_ROOT)
 from src.models.factory import build_model
 from src.datasets.factory import build_dataset
 from src.utils.training_utils import get_device, load_checkpoint_state
-from src.losses.sigreg import SIGRegLoss
+from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
+from src.losses.sigreg import compute_sigreg_statistic
 from src.metrics.eval_metrics import compute_sigreg_stat, compute_latent_std
 
 
 def compute_sigreg(slots, num_proj, knots=17, t_max=3.0, n_calls=3):
     """Mean raw SIGReg statistic over `n_calls` (projections are resampled per call)."""
-    loss_fn = SIGRegLoss(weight=1.0, num_proj=num_proj, knots=knots, t_max=t_max)
     vals = []
     for _ in range(n_calls):
-        _, info = loss_fn(slots)
-        vals.append(info["sigreg_loss"])
+        per_slot = compute_sigreg_statistic(slots, num_proj, knots=knots, t_max=t_max)
+        vals.append(per_slot.mean().item())
     return sum(vals) / len(vals)
 
 
@@ -72,13 +72,9 @@ def main():
     device = get_device("cuda")
     ckpt_dir = os.path.dirname(os.path.abspath(args.ckpt))
 
-    # ── Load training config + checkpoint ────────────────────────────────
-    from omegaconf import OmegaConf
-    saved_cfg = OmegaConf.load(os.path.join(ckpt_dir, "config.yaml"))
-    cfg_dict = OmegaConf.to_container(saved_cfg, resolve=True)
-    print(f"Loaded config from: {os.path.join(ckpt_dir, 'config.yaml')}")
-
-    model = build_model(cfg_dict).to(device)
+    # ── Reconstruct the experiment from the checkpoint ───────────────────
+    model, cfg_dict = bootstrap_checkpoint(args.ckpt)
+    model = model.to(device)
     load_checkpoint_state(model, args.ckpt, device=device)
     print(f"Loaded checkpoint: {args.ckpt}")
 

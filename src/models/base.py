@@ -55,8 +55,9 @@ class ModelOutput(TypedDict, total=False):
     pred_boxes: Optional[Tensor]        # [B, Q, 4]
     pred_logits: Optional[Tensor]       # [B, Q, num_classes + 1]
 
-    # Segmentation / reconstruction outputs (SAVi family)
-    pred_masks: Optional[Tensor]        # [B, T, K, H, W]
+    # Segmentation / reconstruction outputs (SAVi family) — one shape per key;
+    # the wrapper normalizes, consumers take these keys strictly.
+    pred_masks: Optional[Tensor]        # [B, T, K, H, W] (always 5-D, squeezed)
     recon_img: Optional[Tensor]         # [B, T, C, H, W]
     post_slots: Optional[Tensor]        # [B, T, K, D]
 
@@ -98,7 +99,6 @@ class BaseModelWrapper(abc.ABC, nn.Module):
                     "type": "savi",
                     "num_slots": 4,
                     "slot_dim": 64,
-                    "weight_dict": {"recon": 1.0, "mask": 1.0},
                     ...
                 }
 
@@ -146,3 +146,13 @@ class BaseModelWrapper(abc.ABC, nn.Module):
                 loss terms (e.g. ``{"recon_loss": 0.42, "mask_bce": 0.11}``)
         """
         ...
+
+    def inner_savi(self):
+        """
+        Return the core StoSAVi model.
+
+        Wrappers that own a StoSAVi core override this with a typed accessor
+        (rollout / slotformer / pidm rely on it instead of reaching through
+        ``.model`` attributes).
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not own a StoSAVi core")

@@ -20,21 +20,8 @@ if REPO_ROOT not in sys.path:
 
 from src.models.factory import build_model
 from src.datasets.factory import build_dataloader
-from src.losses import build_loss
 from src.training import BaseTrainer, TrainConfig, run_training
-from src.utils.training_utils import set_seed, load_checkpoint_state
-
-
-def _save_checkpoint(model: torch.nn.Module, path: str, epoch: int) -> None:
-    """Save checkpoint file to path."""
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    state = getattr(model, "model", model).state_dict()
-    payload = {
-        "model_state": state,
-        "epoch": epoch,
-    }
-    torch.save(payload, path)
-    print(f"Saved checkpoint: {path}")
+from src.utils.training_utils import set_seed, load_checkpoint_state, save_checkpoint
 
 
 def _auto_dvc_commit(best_path: str) -> None:
@@ -100,8 +87,7 @@ def main(cfg: DictConfig) -> None:
     train_loader = build_dataloader(cfg_dict, split="train")
     val_loader = build_dataloader(cfg_dict, split="val")
 
-    # ── 3. Build Loss Function & Trainer ──────────────────────────────────
-    loss_fn = build_loss(cfg_dict)
+    # ── 3. Build Trainer (loss is injected by build_model via the factory) ──
     trainer = BaseTrainer(save_dir=ckpt_dir, experiment_name=cfg.exp_name, use_wandb=cfg.get("use_wandb", False), cfg_dict=cfg_dict)
 
     # ── 4. Build Optimizer & Scaler ───────────────────────────────────────
@@ -124,7 +110,7 @@ def main(cfg: DictConfig) -> None:
         device=device,
         cfg=train_cfg,
         trainer=trainer,
-        save_checkpoint_fn=_save_checkpoint,
+        save_checkpoint_fn=save_checkpoint,
     )
 
     trainer.close()
