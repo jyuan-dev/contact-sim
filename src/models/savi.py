@@ -26,6 +26,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.utils.tensor_checks import check_tensor_shape
+
 
 # ── CNN / shape helpers ───────────────────────────────────────────────────────
 
@@ -140,8 +142,9 @@ class SlotAttention(nn.Module):
     def forward(self, inputs: torch.Tensor, slots: torch.Tensor) -> torch.Tensor:
         """`inputs`: [B, N, C] flattened per-pixel features,
         `slots`: [B, num_slots, C] slot inits."""
+        check_tensor_shape(inputs, "inputs", ndim=3)
+        check_tensor_shape(slots, "slots", ndim=3)
         bs, num_inputs, inputs_size = inputs.shape
-        assert len(slots.shape) == 3
         inputs = self.norm_inputs(inputs)
         k = self.project_k(inputs)  # [B, num_inputs, slot_size]
         v = self.project_v(inputs)  # [B, num_inputs, slot_size]
@@ -443,7 +446,11 @@ class StoSAVi(nn.Module):
         Returns (post_slots [B, T, num_slots, slot_size],
                  encoder_out [B, T, H*W, enc_out_channels]).
         """
+        check_tensor_shape(img, "img", ndim=5)
         B, T, C, H, W = img.shape
+        if prev_slots is not None:
+            check_tensor_shape(prev_slots, "prev_slots", ndim=3,
+                               shape=(B, None, None))
         encoder_out = self._get_encoder_out(img.flatten(0, 1))
         encoder_out = encoder_out.unflatten(0, (B, T))
 
@@ -469,6 +476,10 @@ class StoSAVi(nn.Module):
 
     def forward(self, data_dict):
         """Forward pass. `data_dict['img']`: [B, T, C, H, W]."""
+        if not isinstance(data_dict, dict):
+            raise TypeError(f"data_dict must be a dict, got {type(data_dict).__name__}")
+        if "img" not in data_dict:
+            raise ValueError("data_dict must contain the 'img' key")
         return self._forward(data_dict['img'], None)
 
     def _forward(self, img, prev_slots=None):
@@ -496,6 +507,7 @@ class StoSAVi(nn.Module):
 
         `slots`: [B, num_slots, slot_size].
         """
+        check_tensor_shape(slots, "slots", ndim=3)
         bs, num_slots, slot_size = slots.shape
         height, width = self.resolution
         num_channels = 3
@@ -614,5 +626,6 @@ class SAVi(nn.Module):
     def forward(self, x, **kwargs):
         """Forward pass. Accepts tensor [B, T, C, H, W] or dict {'img': ...}."""
         if isinstance(x, torch.Tensor):
+            check_tensor_shape(x, "x", ndim=5)
             x = {'img': x}
         return self.model(x)

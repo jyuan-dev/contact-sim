@@ -14,6 +14,8 @@ import cv2
 import torch
 from scipy.optimize import linear_sum_assignment
 
+from src.utils.tensor_checks import check_tensor_shape
+
 
 def compute_binary_iou_dice(pred_mask, gt_mask, thresh=0.3):
     """Computes binary IoU and Dice score for a single frame mask."""
@@ -137,6 +139,17 @@ def greedy_slot_assignments(pred_masks, gt_masks, thresh=0.5):
         'assignments': [B, T, Kp] long tensor of assigned GT slot indices
         'iou_matrices': [B, T, Kp, Kg] float tensor
     """
+    check_tensor_shape(pred_masks, "pred_masks", ndim=5)
+    check_tensor_shape(gt_masks, "gt_masks", ndim=5)
+    if pred_masks.shape[:2] != gt_masks.shape[:2]:
+        raise ValueError(
+            f"pred_masks and gt_masks must share (B, T), got "
+            f"{tuple(pred_masks.shape[:2])} vs {tuple(gt_masks.shape[:2])}")
+    if pred_masks.shape[-2:] != gt_masks.shape[-2:]:
+        raise ValueError(
+            f"pred_masks and gt_masks must share (H, W), got "
+            f"{tuple(pred_masks.shape[-2:])} vs {tuple(gt_masks.shape[-2:])}")
+
     B, T = pred_masks.shape[:2]
     p_bin = (pred_masks > thresh).float()
     g_bin = (gt_masks > thresh).float()
@@ -244,6 +257,22 @@ class DeterministicEvaluator:
         list) — episode_idx/start_frame come from the dataset batch and are
         the source of truth for per-sequence records.
         """
+        # Validate inputs before any computation.
+        if recon is not None and video is not None:
+            check_tensor_shape(recon, "recon", ndim=5)
+            check_tensor_shape(video, "video", ndim=5)
+            if recon.shape[:2] != video.shape[:2]:
+                raise ValueError(
+                    f"recon and video must share (B, T), got "
+                    f"{tuple(recon.shape[:2])} vs {tuple(video.shape[:2])}")
+        if pred_masks is not None and gt_masks is not None:
+            check_tensor_shape(pred_masks, "pred_masks", ndim=5)
+            check_tensor_shape(gt_masks, "gt_masks", ndim=5)
+            if pred_masks.shape[:2] != gt_masks.shape[:2]:
+                raise ValueError(
+                    f"pred_masks and gt_masks must share (B, T), got "
+                    f"{tuple(pred_masks.shape[:2])} vs {tuple(gt_masks.shape[:2])}")
+
         mse_per_seq = None
         if recon is not None and video is not None:
             mse_per_seq = torch.mean((recon - video) ** 2, dim=(2, 3, 4))  # [B, T]

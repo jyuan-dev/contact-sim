@@ -70,6 +70,10 @@ def bootstrap_checkpoint(ckpt_path: str, cli_overrides: dict | None = None):
         (model_wrapper, cfg_dict) — the built wrapper (weights NOT loaded) and
         the resolved config dict.
     """
+    if not isinstance(ckpt_path, (str, os.PathLike)):
+        raise TypeError(f"ckpt_path must be a path string, got {type(ckpt_path).__name__}")
+    if cli_overrides is not None and not isinstance(cli_overrides, dict):
+        raise TypeError(f"cli_overrides must be a dict or None, got {type(cli_overrides).__name__}")
     if not os.path.isabs(ckpt_path):
         ckpt_path = os.path.join(REPO_ROOT, ckpt_path)
     if not os.path.exists(ckpt_path):

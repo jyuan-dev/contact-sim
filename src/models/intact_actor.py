@@ -16,6 +16,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.utils.tensor_checks import check_tensor_shape
+
 
 class RobotSlotIntentActionActor(nn.Module):
     """
@@ -104,8 +106,13 @@ class RobotSlotIntentActionActor(nn.Module):
         Returns:
             Concatenated actor feature vector [B, hidden_dim + action_emb_dim]
         """
+        check_tensor_shape(z_curr, "z_curr", ndim=3)
+        check_tensor_shape(z_next, "z_next", ndim=3)
         if z_curr.shape != z_next.shape:
             raise ValueError(f"z_curr and z_next must have same shape, got {z_curr.shape} and {z_next.shape}")
+        if prev_action is not None:
+            check_tensor_shape(prev_action, "prev_action", ndim=2,
+                               shape=(z_curr.shape[0], None))
 
         intent = z_next - z_curr  # [B, K, D]
         grammar = torch.cat([z_curr, intent, z_curr * intent], dim=-1)  # [B, K, 3D]

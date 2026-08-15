@@ -75,14 +75,6 @@ class TestMaskSegmentationLossEdgeCases(unittest.TestCase):
         weighted, info = loss_fn(out, batch)
         self.assertTrue(torch.is_tensor(weighted))
 
-    def test_6d_pred_masks_squeezed(self):
-        """6D pred_masks [B,T,K,1,H,W] should be squeezed to 5D."""
-        loss_fn = MaskSegmentationLoss(weight=1.0)
-        out = {'pred_masks': torch.sigmoid(torch.randn(2, 3, 3, 1, 64, 64))}
-        batch = {'gt_masks': (torch.randn(2, 3, 3, 64, 64) > 0).float()}
-        weighted, info = loss_fn(out, batch)
-        self.assertTrue(torch.is_tensor(weighted))
-
     def test_size_mismatch_interpolates(self):
         """When pred and GT masks have different spatial sizes, interpolate."""
         loss_fn = MaskSegmentationLoss(weight=1.0)

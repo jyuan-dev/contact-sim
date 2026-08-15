@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.utils.tensor_checks import check_tensor_shape
+
 
 def predict_slot_rollout(
     wrapper_model: nn.Module,
@@ -33,6 +35,13 @@ def predict_slot_rollout(
             'post_slots': [B, T, K, D]
             'is_rollout_mask': [T] boolean tensor (True for rollout frames t >= n_cond_frames)
     """
+    check_tensor_shape(video, "video", ndim=5)
+    if not isinstance(n_cond_frames, int):
+        raise TypeError(f"n_cond_frames must be an int, got {type(n_cond_frames).__name__}")
+    if not 1 <= n_cond_frames <= video.shape[1]:
+        raise ValueError(
+            f"n_cond_frames must be in [1, T={video.shape[1]}], got {n_cond_frames}")
+
     model = getattr(wrapper_model, "model", wrapper_model)
 
     # Check if Stage 2 SlotFormerModel is present

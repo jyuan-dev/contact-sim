@@ -11,6 +11,8 @@ characteristic function (ECF) test against N(0, I) per slot independently.
 import torch
 import torch.nn as nn
 
+from src.utils.tensor_checks import check_tensor_shape
+
 
 def compute_sigreg_statistic(z, num_proj, knots=17, t_max=3.0, seed=None):
     """
@@ -21,6 +23,7 @@ def compute_sigreg_statistic(z, num_proj, knots=17, t_max=3.0, seed=None):
     the random projections for reproducibility (metrics / tests); ``None``
     resamples them per call.
     """
+    check_tensor_shape(z, "z", ndim=4)
     B, T, K, D = z.shape
     proj = z.float().permute(2, 1, 0, 3)  # (K, T, B, D)
 
@@ -74,10 +77,11 @@ class SIGRegLoss(nn.Module):
         else:
             z = out
 
-        if z is None or not torch.is_tensor(z) or z.numel() == 0:
+        if z is None or z.numel() == 0:
             return torch.tensor(0.0), {"sigreg_loss": 0.0}
 
-        if z.ndim != 4 or z.shape[0] < 2:
+        check_tensor_shape(z, "post_slots", ndim=4)
+        if z.shape[0] < 2:
             return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
 
         per_slot = compute_sigreg_statistic(
