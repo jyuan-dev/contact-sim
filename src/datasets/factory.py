@@ -6,14 +6,16 @@ Provides unified factory functions:
   - build_dataloader(cfg, split='train', batch_size=None, num_workers=4) -> PyTorch DataLoader
 """
 
+from typing import Any, Optional, cast
+
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from src.datasets.pusht import PushTMaskHDF5Dataset
 from src.datasets.gridshapes import GridShapesDataset
 
 
-def build_dataset(cfg, split: str = 'train'):
+def build_dataset(cfg: dict[str, Any], split: str = 'train') -> Dataset:
     """
     Constructs a dataset instance based on configuration dictionary.
 
@@ -27,15 +29,13 @@ def build_dataset(cfg, split: str = 'train'):
     try:
         from omegaconf import OmegaConf, DictConfig
         if isinstance(cfg, DictConfig):
-            cfg = OmegaConf.to_container(cfg, resolve=True)
+            resolved = cast(dict[str, Any], OmegaConf.to_container(cfg, resolve=True))
+            cfg = resolved
     except ImportError:
         pass
 
-    ds_cfg = cfg.get('dataset', cfg)
-    if isinstance(cfg, dict):
-        merged_cfg = {**cfg, **ds_cfg}
-    else:
-        merged_cfg = ds_cfg
+    ds_cfg = cast(dict[str, Any], cfg.get('dataset', cfg))
+    merged_cfg: dict[str, Any] = {**cfg, **ds_cfg}
 
     ds_name = merged_cfg.get('name', merged_cfg.get('type', 'pusht')).lower()
 
@@ -46,7 +46,8 @@ def build_dataset(cfg, split: str = 'train'):
             default_filename='pusht_expert_train_64x64.h5'
         )
 
-        resolution = tuple(merged_cfg.get('resolution', (64, 64)))
+        resolution = (int(merged_cfg.get('resolution', (64, 64))[0]),
+                      int(merged_cfg.get('resolution', (64, 64))[1]))
         n_sample_frames = merged_cfg.get('n_sample_frames', merged_cfg.get('seq_len', 6))
         frame_offset = merged_cfg.get('frame_offset', 1)
         seed = merged_cfg.get('seed', 42)
@@ -91,7 +92,7 @@ def build_dataset(cfg, split: str = 'train'):
         raise ValueError(f"Unknown dataset name: '{ds_name}'. Supported: 'pusht', 'gridshapes'.")
 
 
-def build_dataloader(cfg, split: str = 'train', batch_size: int = None, num_workers: int = 4, shuffle: bool = None):
+def build_dataloader(cfg: dict[str, Any], split: str = 'train', batch_size: Optional[int] = None, num_workers: int = 4, shuffle: Optional[bool] = None) -> DataLoader:
     """
     Constructs a PyTorch DataLoader for the specified dataset split with GPU pin_memory and prefetching optimizations.
     """

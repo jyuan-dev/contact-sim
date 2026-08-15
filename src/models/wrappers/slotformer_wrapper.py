@@ -8,6 +8,7 @@ Registered under: ``"slotformer"``, ``"slot_former"``
 from __future__ import annotations
 
 import os
+from typing import Any, cast
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -41,7 +42,7 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         self.model = model
         self.resolution = resolution
 
-    def inner_savi(self):
+    def inner_savi(self) -> Any:
         """Return the Stage-1 StoSAVi core (typed accessor)."""
         stage1 = getattr(self.model, "stage1_model", None)
         if stage1 is None:
@@ -172,7 +173,7 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         }
         if "action_nll_dict" in out_dict:
             res["action_nll_dict"] = out_dict["action_nll_dict"]
-        return res
+        return cast(ModelOutput, res)
 
     def compute_loss(
         self, out: ModelOutput, batch: dict

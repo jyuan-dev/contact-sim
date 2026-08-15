@@ -68,10 +68,10 @@ class TestRolloutInputValidation(unittest.TestCase):
         wrapper = build_model({"model": {"name": "savi", "type": "savi",
                                          "num_slots": 2, "slot_dim": 32, "resolution": [64, 64]}}).eval()
         video = torch.randn(2, 4, 3, 64, 64)
-        for bad in (0, 5):
+        for bad in (0, 5, True):
             with self.assertRaises(ValueError):
                 predict_slot_rollout(wrapper, video, n_cond_frames=bad)
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ValueError):
             predict_slot_rollout(wrapper, video, n_cond_frames=2.5)
 
 
@@ -83,7 +83,8 @@ class TestMetricsInputValidation(unittest.TestCase):
             greedy_slot_assignments(torch.rand(2, 4, 2, 64, 64), torch.rand(2, 4, 2, 32, 32))  # H/W mismatch
 
     def test_greedy_assignments_non_tensor(self):
-        with self.assertRaises(TypeError):
+        # typechecked is configured so all input violations raise ValueError
+        with self.assertRaises(ValueError):
             greedy_slot_assignments("masks", torch.rand(2, 4, 2, 64, 64))
 
     def test_evaluator_update_shape_mismatch(self):

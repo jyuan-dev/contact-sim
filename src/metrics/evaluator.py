@@ -9,15 +9,18 @@ Computes:
   4. Reconstruction Metrics: MSE and PSNR.
 """
 
+from typing import Any, Optional
+
 import numpy as np
 import cv2
 import torch
 from scipy.optimize import linear_sum_assignment
+from jaxtyping import Float
 
-from src.utils.tensor_checks import check_tensor_shape
+from src.utils.tensor_checks import check_tensor_shape, typechecked
 
 
-def compute_binary_iou_dice(pred_mask, gt_mask, thresh=0.3):
+def compute_binary_iou_dice(pred_mask: np.ndarray, gt_mask: np.ndarray, thresh: float = 0.3) -> tuple[float, float]:
     """Computes binary IoU and Dice score for a single frame mask."""
     pred_bin = (pred_mask > thresh).astype(np.float32)
     gt_bin = (gt_mask > 0.5).astype(np.float32)
@@ -37,11 +40,11 @@ def compute_binary_iou_dice(pred_mask, gt_mask, thresh=0.3):
 class EvaluationSuite:
     """Evaluates segmentation, bounding box, reconstruction, and temporal slot swapping metrics."""
 
-    def __init__(self, num_classes=3, class_names=None):
+    def __init__(self, num_classes: int = 3, class_names: Optional[dict[int, str]] = None) -> None:
         self.num_classes = num_classes
         self.class_names = class_names or {0: "Block", 1: "Agent", 2: "Goal"}
 
-    def evaluate_sequence_masks(self, pred_masks, gt_masks_dict, thresh=0.3):
+    def evaluate_sequence_masks(self, pred_masks: np.ndarray, gt_masks_dict: dict[int, np.ndarray], thresh: float = 0.3) -> dict:
         """
         Evaluates sequence of predicted slot masks [T, K, H, W] against GT masks dict {class_id: [T, H, W]}.
 
@@ -118,7 +121,12 @@ class EvaluationSuite:
         return metrics
 
 
-def greedy_slot_assignments(pred_masks, gt_masks, thresh=0.5):
+@typechecked
+def greedy_slot_assignments(
+    pred_masks: Float[torch.Tensor, "B T K H W"],
+    gt_masks: Float[torch.Tensor, "B T M H W"],
+    thresh=0.5,
+) -> dict:
     """
     Greedy per-slot argmax assignment + swap tracking — the canonical swap metric.
 
@@ -188,7 +196,7 @@ def greedy_slot_assignments(pred_masks, gt_masks, thresh=0.5):
     }
 
 
-def _distribution_stats(values):
+def _distribution_stats(values: list[float]) -> dict:
     """Distribution stats of a list of floats, computed on torch."""
     if not values:
         return {}
@@ -205,7 +213,7 @@ def _distribution_stats(values):
     }
 
 
-def _batch_meta(x, b_idx):
+def _batch_meta(x: Any, b_idx: int) -> Any:
     """Normalize dataset batch metadata (tensor or list) to a scalar."""
     if x is None:
         return None
@@ -224,13 +232,13 @@ class DeterministicEvaluator:
     and serialization.
     """
 
-    def __init__(self, num_classes=3, slot_names=None, thresh=0.5):
+    def __init__(self, num_classes: int = 3, slot_names: Optional[dict[int, str]] = None, thresh: float = 0.5) -> None:
         self.num_classes = num_classes
         self.slot_names = slot_names or {k: f"Slot {k}" for k in range(num_classes)}
         self.thresh = thresh
         self._reset()
 
-    def _reset(self):
+    def _reset(self) -> None:
         self.mses = []   # per-batch mean MSE
         self.mious = []  # per-sequence mean IoU
         self.mdices = []  # per-sequence mean Dice
@@ -247,8 +255,9 @@ class DeterministicEvaluator:
         self.total_sequences = 0
         self.clip_count = 0
 
-    def update(self, pred_masks, gt_masks, recon=None, video=None,
-               episode_idx=None, start_frame=None, clip_idx=None):
+    def update(self, pred_masks: Optional[torch.Tensor], gt_masks: Optional[torch.Tensor], recon: Optional[torch.Tensor] = None,
+               video: Optional[torch.Tensor] = None, episode_idx: Any = None, start_frame: Any = None,
+               clip_idx: Any = None) -> None:
         """
         Accumulate one batch.
 
@@ -344,11 +353,11 @@ class DeterministicEvaluator:
             })
         self.clip_count += B
 
-    def running_miou_mean(self):
+    def running_miou_mean(self) -> float:
         """Current mean mIoU over accumulated sequences (for progress prints)."""
         return float(torch.tensor(self.mious).mean()) if self.mious else 0.0
 
-    def finalize(self):
+    def finalize(self) -> dict:
         """Return raw-fraction aggregates (no percentage conversion)."""
         slot_swap_rate = (self.swap_transitions / self.total_transitions) if self.total_transitions > 0 else 0.0
         seq_swap_rate = (self.swapped_sequences / self.total_sequences) if self.total_sequences > 0 else 0.0

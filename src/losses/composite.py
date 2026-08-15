@@ -3,6 +3,8 @@ Composite Loss Module.
 Aggregates multiple individual loss modules directly instantiated via Hydra configurations.
 """
 
+from typing import Any
+
 import torch
 import torch.nn as nn
 
@@ -12,7 +14,7 @@ class CompositeLoss(nn.Module):
     Composite Loss Module that aggregates arbitrary loss components configured in Hydra YAMLs.
     """
 
-    def __init__(self, losses: dict[str, nn.Module] | None = None, **kwargs):
+    def __init__(self, losses: dict[str, nn.Module] | None = None, **kwargs: Any) -> None:
         super().__init__()
         self.losses = nn.ModuleDict()
 

@@ -29,7 +29,7 @@ imports all wrappers which triggers their ``@register_model`` decorators.
 
 from __future__ import annotations
 
-from typing import Type
+from typing import Callable, Type
 
 from src.models.base import BaseModelWrapper
 
@@ -38,7 +38,7 @@ from src.models.base import BaseModelWrapper
 _MODEL_REGISTRY: dict[str, Type[BaseModelWrapper]] = {}
 
 
-def register_model(name: str):
+def register_model(name: str | list[str]) -> Callable[[type], type]:
     """
     Class decorator that registers a ``BaseModelWrapper`` subclass under one or
     more names.  Accepts a single name or a list of aliases.
@@ -107,9 +107,12 @@ def _resolve_cfg(cfg) -> dict:
     try:
         from omegaconf import OmegaConf, DictConfig
         if isinstance(cfg, DictConfig):
-            return OmegaConf.to_container(cfg, resolve=True)
+            resolved = OmegaConf.to_container(cfg, resolve=True)
+            assert isinstance(resolved, dict)
+            return resolved
     except ImportError:
         pass
+    assert isinstance(cfg, dict)
     return cfg
 
 

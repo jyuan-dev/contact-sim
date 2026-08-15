@@ -22,6 +22,10 @@ dependencies = [
     "tensorboard",
     "scikit-learn",
     "scikit-image",
+    "jaxtyping",
+    "beartype",
+    "typeguard>=4",
+    "typing_extensions",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +36,13 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*", "scripts*"]
+
+[tool.pyright]
+include = ["src"]
+exclude = ["tests", "scripts", "third_party", "scratch", "outputs"]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

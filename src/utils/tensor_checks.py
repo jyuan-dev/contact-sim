@@ -1,15 +1,31 @@
 """
-Explicit input validation for public model seams.
+Input validation for public model seams.
 
-One implementation of "is this the tensor I think it is": TypeError for
-non-tensors, ValueError for ndim / shape mismatches. Seams validate instead
-of failing deep inside the forward pass with a cryptic broadcasting error.
+Two entry points, one contract (bad input raises ValueError naming the
+problem):
+
+- :data:`typechecked` — beartype+jaxtyping decorator enforcing shape
+  annotations (``Float[Tensor, "B T C H W"]``) at runtime, configured so
+  violations raise ``ValueError`` (the train loop's skip-batch recovery
+  catches it). Use for purely per-argument shape contracts.
+- :func:`check_tensor_shape` — imperative call for checks an annotation
+  cannot express (cross-argument relations, conditional shapes, value
+  bounds, dict keys).
 """
 
+from typing import Optional
+
 import torch
+from beartype import beartype, BeartypeConf
+
+typechecked = beartype(conf=BeartypeConf(
+    violation_param_type=ValueError,
+    violation_return_type=ValueError,
+))
 
 
-def check_tensor_shape(x, name: str, ndim: int = None, shape: tuple = None) -> None:
+def check_tensor_shape(x, name: str, ndim: Optional[int] = None,
+                       shape: Optional[tuple] = None) -> None:
     """
     Validate that ``x`` is a torch.Tensor with the expected rank and shape.
 

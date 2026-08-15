@@ -5,10 +5,12 @@ Training helper functions: learning rate scheduling, random seed initialization,
 import math
 import os
 import random
+from typing import Optional
+
 import numpy as np
 import torch
 
-def set_seed(seed: int = 42):
+def set_seed(seed: int = 42) -> None:
     """Set random seed for reproducibility across random, numpy, and torch."""
     random.seed(seed)
     np.random.seed(seed)
@@ -26,7 +28,7 @@ def cosine_anneal_with_warmup(step: int, total_steps: int, warmup_steps: int, lr
     progress = min(max(progress, 0.0), 1.0)
     return min_lr + 0.5 * (lr - min_lr) * (1.0 + math.cos(math.pi * progress))
 
-def get_device(requested_device: str = None) -> torch.device:
+def get_device(requested_device: Optional[str] = None) -> torch.device:
     """Get PyTorch device (cuda/cpu)."""
     if requested_device:
         return torch.device(requested_device)
@@ -50,7 +52,7 @@ def save_checkpoint(model: torch.nn.Module, path: str, epoch: int) -> None:
 
 
 def load_checkpoint_state(model: torch.nn.Module, ckpt_path: str,
-                          device: torch.device = None) -> None:
+                          device: Optional[torch.device] = None) -> None:
     """
     Load a checkpoint into *model*, validating that keys match.
 

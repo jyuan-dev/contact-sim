@@ -9,13 +9,15 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from jaxtyping import Float
 
-from src.utils.tensor_checks import check_tensor_shape
+from src.utils.tensor_checks import typechecked
 
 
+@typechecked
 def predict_slot_rollout(
     wrapper_model: nn.Module,
-    video: torch.Tensor,
+    video: Float[torch.Tensor, "B T C H W"],
     n_cond_frames: int = 2,
 ) -> dict[str, torch.Tensor]:
     """
@@ -35,12 +37,11 @@ def predict_slot_rollout(
             'post_slots': [B, T, K, D]
             'is_rollout_mask': [T] boolean tensor (True for rollout frames t >= n_cond_frames)
     """
-    check_tensor_shape(video, "video", ndim=5)
-    if not isinstance(n_cond_frames, int):
-        raise TypeError(f"n_cond_frames must be an int, got {type(n_cond_frames).__name__}")
-    if not 1 <= n_cond_frames <= video.shape[1]:
+    # Value bounds — the annotations cover type and shape, not the range
+    # (beartype treats bool as an int, hence the explicit bool guard).
+    if isinstance(n_cond_frames, bool) or not 1 <= n_cond_frames <= video.shape[1]:
         raise ValueError(
-            f"n_cond_frames must be in [1, T={video.shape[1]}], got {n_cond_frames}")
+            f"n_cond_frames must be in [1, T={video.shape[1]}], got {n_cond_frames!r}")
 
     model = getattr(wrapper_model, "model", wrapper_model)
 

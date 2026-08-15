@@ -90,6 +90,7 @@ class GoalConditionedRollouterLayer(nn.Module):
             elif goal_emb.ndim == 3:
                 goal_emb = goal_emb.unsqueeze(1)  # [B, 1, K, D_goal]
 
+            assert self.modulation is not None, "modulation layer not built for this condition mode"
             shift_a, scale_a, gate_a, shift_m, scale_m, gate_m = self.modulation(goal_emb).chunk(6, dim=-1)
             x = x + gate_a * self.temporal_attn(self.norm1(x) * (1 + scale_a) + shift_a)
             x = x + self.interactive_attn(self.norm2(x))
@@ -340,7 +341,7 @@ class PIDMModel(nn.Module):
             p.requires_grad = False
         self.stage1_model.eval()
 
-    def train(self, mode: bool = True):
+    def train(self, mode: bool = True) -> "PIDMModel":
         super().train(mode)
         # Always maintain Stage 1 in eval mode
         self.stage1_model.eval()

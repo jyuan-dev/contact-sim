@@ -9,6 +9,8 @@ Registered under: ``"savi"``, ``"stosavi"``
 
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -118,7 +120,7 @@ class StandardizedSAViWrapper(BaseModelWrapper):
             "post_slots": raw_out["post_slots"],
         }
 
-    def inner_savi(self):
+    def inner_savi(self) -> Any:
         """Return the core StoSAVi model (typed accessor)."""
         return self.model.model
 

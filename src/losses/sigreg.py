@@ -10,11 +10,15 @@ characteristic function (ECF) test against N(0, I) per slot independently.
 
 import torch
 import torch.nn as nn
+from typing import Any, Optional, Union
+from jaxtyping import Float
 
-from src.utils.tensor_checks import check_tensor_shape
+from src.utils.tensor_checks import check_tensor_shape, typechecked
 
 
-def compute_sigreg_statistic(z, num_proj, knots=17, t_max=3.0, seed=None):
+@typechecked
+def compute_sigreg_statistic(z: Float[torch.Tensor, "B T K D"], num_proj,
+                             knots=17, t_max=3.0, seed=None) -> torch.Tensor:
     """
     Per-slot Epps-Pulley ECF statistic — the single SIGReg core.
 
@@ -62,8 +66,8 @@ class SIGRegLoss(nn.Module):
         num_proj: int = 1024,
         knots: int = 17,
         t_max: float = 3.0,
-        seed: int | None = None,
-    ):
+        seed: Optional[int] = None,
+    ) -> None:
         super().__init__()
         self.weight = weight
         self.num_proj = num_proj
@@ -71,17 +75,17 @@ class SIGRegLoss(nn.Module):
         self.t_max = t_max
         self.seed = seed
 
-    def forward(self, out, batch=None):
+    def forward(self, out: Union[dict, torch.Tensor, None], batch: Any = None) -> tuple[torch.Tensor, dict[str, float]]:
         if isinstance(out, dict):
             z = out["post_slots"]
         else:
             z = out
 
-        if z is None or z.numel() == 0:
+        if z is None:
             return torch.tensor(0.0), {"sigreg_loss": 0.0}
 
         check_tensor_shape(z, "post_slots", ndim=4)
-        if z.shape[0] < 2:
+        if z.numel() == 0 or z.shape[0] < 2:
             return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
 
         per_slot = compute_sigreg_statistic(

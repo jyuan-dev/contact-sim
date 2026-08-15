@@ -25,10 +25,7 @@ from __future__ import annotations
 import abc
 from typing import Any, Optional
 
-try:
-    from typing import Required, NotRequired
-except ImportError:          # Python < 3.11
-    from typing_extensions import Required, NotRequired
+from typing_extensions import NotRequired, Required
 
 try:
     from typing import TypedDict
@@ -147,7 +144,7 @@ class BaseModelWrapper(abc.ABC, nn.Module):
         """
         ...
 
-    def inner_savi(self):
+    def inner_savi(self) -> Any:
         """
         Return the core StoSAVi model.
 

@@ -12,6 +12,7 @@ SlotFormer architecture sniffing from ``rollouter.*`` state-dict key shapes.
 """
 
 import os
+from typing import Any
 
 import torch
 from omegaconf import OmegaConf
@@ -21,7 +22,7 @@ from src.models.factory import build_model
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _discover_config(ckpt_dir: str, ckpt_path: str):
+def _discover_config(ckpt_dir: str, ckpt_path: str) -> Any:
     """Load the saved training config; None if neither candidate exists."""
     candidates = [
         os.path.join(ckpt_dir, "config.yaml"),
@@ -57,7 +58,7 @@ def sniff_slotformer_arch(state_dict) -> dict:
     return {"d_model": d_model, "ffn_dim": ffn_dim, "num_layers": num_layers}
 
 
-def bootstrap_checkpoint(ckpt_path: str, cli_overrides: dict | None = None):
+def bootstrap_checkpoint(ckpt_path: str, cli_overrides: dict | None = None) -> tuple[Any, dict]:
     """
     Reconstruct an experiment from a checkpoint.
 
@@ -98,6 +99,8 @@ def bootstrap_checkpoint(ckpt_path: str, cli_overrides: dict | None = None):
                 **arch,
             }
         }
+
+    assert isinstance(cfg_dict, dict)
 
     if cli_overrides:
         for key, value in cli_overrides.items():

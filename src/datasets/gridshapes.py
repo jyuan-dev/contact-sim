@@ -12,6 +12,8 @@ Conforms to standard dataset dict contract:
   }
 """
 
+from typing import Any
+
 import numpy as np
 import cv2
 import torch
@@ -42,8 +44,8 @@ class GridShapesDataset(Dataset):
     COLORS = ["red", "green", "blue", "yellow", "magenta", "cyan"]
     SHAPES = ["ball", "square", "triangle"]
 
-    def __init__(self, num_samples=1000, num_frames=16, num_objects=3, img_size=64,
-                 shape_size=15, seed=42):
+    def __init__(self, num_samples: int = 1000, num_frames: int = 16, num_objects: int = 3, img_size: int = 64,
+                 shape_size: int = 15, seed: int = 42) -> None:
         super().__init__()
         self.num_samples = num_samples
         self.num_frames = num_frames
@@ -52,10 +54,10 @@ class GridShapesDataset(Dataset):
         self.shape_size = shape_size
         self.seed = seed
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.num_samples
 
-    def _render_shape(self, shape_name, color_rgb, size):
+    def _render_shape(self, shape_name: str, color_rgb: tuple[int, int, int], size: int) -> tuple[np.ndarray, np.ndarray]:
         canvas = np.zeros((size, size, 3), dtype=np.uint8)
         mask = np.zeros((size, size), dtype=np.uint8)
 
@@ -74,7 +76,7 @@ class GridShapesDataset(Dataset):
 
         return canvas, mask
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict[str, Any]:
         rng = np.random.RandomState(self.seed + idx)
 
         frames = np.zeros((self.num_frames, self.img_size, self.img_size, 3), dtype=np.uint8)

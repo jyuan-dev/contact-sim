@@ -15,8 +15,9 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from jaxtyping import Float
 
-from src.utils.tensor_checks import check_tensor_shape
+from src.utils.tensor_checks import check_tensor_shape, typechecked
 
 
 class RobotSlotIntentActionActor(nn.Module):
@@ -91,10 +92,11 @@ class RobotSlotIntentActionActor(nn.Module):
         actor_layers.append(nn.Linear(hidden_dim, 2 * action_dim))
         self.actor_net = nn.Sequential(*actor_layers)
 
+    @typechecked
     def extract_features(
         self,
-        z_curr: torch.Tensor,
-        z_next: torch.Tensor,
+        z_curr: Float[torch.Tensor, "B K D"],
+        z_next: Float[torch.Tensor, "B K D"],
         prev_action: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """

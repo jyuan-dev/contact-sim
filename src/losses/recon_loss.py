@@ -3,6 +3,8 @@ Reconstruction MSE Loss Module.
 Computes MSE between reconstructed images and input images.
 """
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,11 +15,11 @@ class ReconstructionMSELoss(nn.Module):
     Reconstruction Mean Squared Error (MSE) Loss.
     """
 
-    def __init__(self, weight: float = 1.0):
+    def __init__(self, weight: float = 1.0) -> None:
         super().__init__()
         self.weight = weight
 
-    def forward(self, out: dict, batch: dict = None) -> tuple[torch.Tensor, float]:
+    def forward(self, out: dict, batch: Optional[dict] = None) -> tuple[torch.Tensor, float]:
         recon_img = out.get("recon_img")
         input_img = out.get("input_img")
 

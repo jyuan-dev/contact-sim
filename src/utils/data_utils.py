@@ -3,6 +3,7 @@ Dataset loading and path resolution utilities.
 """
 
 import os
+from typing import Any, Optional
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -29,13 +30,13 @@ def find_dataset_path(h5_path: str, default_filename: str = "pusht_expert_train_
 
 def get_dataset(
     dataset_name: str,
-    h5_path: str = None,
+    h5_path: Optional[str] = None,
     split: str = 'train',
     resolution: tuple = (64, 64),
     n_sample_frames: int = 16,
     frame_offset: int = 1,
     train_frac: float = 0.9
-):
+) -> Any:
     """
     Convenience wrapper forwarding to unified build_dataset factory.
     """

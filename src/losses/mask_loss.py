@@ -13,7 +13,7 @@ class MaskSegmentationLoss(nn.Module):
     Mask Segmentation Loss combining Binary Cross-Entropy (BCE) and Dice Loss.
     """
 
-    def __init__(self, weight: float = 1.0, match_mode: str = "fixed"):
+    def __init__(self, weight: float = 1.0, match_mode: str = "fixed") -> None:
         super().__init__()
         self.weight = weight
         self.match_mode = match_mode
@@ -47,7 +47,7 @@ class MaskSegmentationLoss(nn.Module):
                 p_matched = torch.nan_to_num(p_matched, nan=eps).clamp(eps, 1.0 - eps)
                 g_matched = (gt_m[:, :num_matched].to(p_matched.device).reshape(-1, H, W) > 0.5).float()
 
-                with torch.amp.autocast(device_type="cuda", enabled=False):
+                with torch.autocast(device_type="cuda", enabled=False):
                     mask_bce = F.binary_cross_entropy(p_matched, g_matched)
 
                 p_flat_m = p_matched.flatten(1)
@@ -86,7 +86,7 @@ class MaskSegmentationLoss(nn.Module):
                 p_matched = p_matched.clamp(eps, 1.0 - eps)
                 g_matched = (gt_m.reshape(-1, H, W)[matched_tgt] > 0.5).float()
 
-                with torch.amp.autocast(device_type="cuda", enabled=False):
+                with torch.autocast(device_type="cuda", enabled=False):
                     mask_bce = F.binary_cross_entropy(p_matched, g_matched)
 
                 p_flat_m = p_matched.flatten(1)

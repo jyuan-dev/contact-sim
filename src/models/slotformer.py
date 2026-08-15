@@ -94,6 +94,7 @@ class SlotRollouter(nn.Module):
         in_x = x.flatten(1, 2)  # [B, history_len * num_slots, slot_size]
 
         # Temporal PE: [1, T, D] -> [B, T, N, D] -> [B, T * N, D]
+        assert self.enc_t_pe is not None, "rollouter built without a temporal PE"
         enc_pe = self.enc_t_pe.unsqueeze(2).repeat(B, 1, self.num_slots, 1).flatten(1, 2).to(x.device)
 
         if self.enc_slots_pe is not None:
@@ -444,7 +445,7 @@ class SlotFormerModel(nn.Module):
             p.requires_grad = False
         self.stage1_model.eval()
 
-    def train(self, mode: bool = True):
+    def train(self, mode: bool = True) -> "SlotFormerModel":
         super().train(mode)
         # Keep Stage 1 model in eval mode always
         self.stage1_model.eval()

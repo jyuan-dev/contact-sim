@@ -1,4 +1,6 @@
 import os
+from typing import Any, Optional
+
 import numpy as np
 import h5py
 
@@ -27,7 +29,7 @@ def get_shared_pixels(h5_path: str) -> torch.Tensor:
     if h5_path not in _SHARED_PIXELS_CACHE:
         print(f"[PushTMaskHDF5Dataset] Preloading {h5_path} (1.4 GB) into shared RAM IPC memory...")
         with h5py.File(h5_path, 'r') as f:
-            pix = torch.from_numpy(f['pixels'][:])
+            pix = torch.from_numpy(np.asarray(f['pixels']))
             pix.share_memory_()
             _SHARED_PIXELS_CACHE[h5_path] = pix
     return _SHARED_PIXELS_CACHE[h5_path]
@@ -41,7 +43,7 @@ class PushTMaskHDF5Dataset(Dataset):
         self,
         h5_path: str,
         split: str = 'train',
-        resolution=(64, 64),
+        resolution: tuple[int, int] = (64, 64),
         n_sample_frames: int = 6,
         frame_offset: int = 1,
         train_frac: float = 0.9,
@@ -49,7 +51,7 @@ class PushTMaskHDF5Dataset(Dataset):
         load_masks: bool = False,
         preload_ram: bool = True,
         include_goal_mask: bool = True,
-    ):
+    ) -> None:
         assert split in ('train', 'val')
         self.h5_path = h5_path
         self.split = split
@@ -65,12 +67,9 @@ class PushTMaskHDF5Dataset(Dataset):
             get_shared_pixels(self.h5_path)
 
         with h5py.File(h5_path, 'r') as f:
-            ep_lens = f['ep_len'][:]
-            ep_offs = f['ep_offset'][:]
-
-        self._ep_lens = ep_lens.tolist()
-        self._ep_offs = ep_offs.tolist()
-        n_episodes = len(ep_lens)
+            self._ep_lens = np.asarray(f['ep_len']).tolist()
+            self._ep_offs = np.asarray(f['ep_offset']).tolist()
+        n_episodes = len(self._ep_lens)
 
         rng = np.random.RandomState(seed)
         idx = rng.permutation(n_episodes)
@@ -86,12 +85,12 @@ class PushTMaskHDF5Dataset(Dataset):
               f"{len(self._index)} clips (load_masks={load_masks}, preload_ram={preload_ram})")
 
     @property
-    def h5(self):
+    def h5(self) -> h5py.File:
         if self._h5 is None:
             self._h5 = h5py.File(self.h5_path, 'r')
         return self._h5
 
-    def _build_index(self):
+    def _build_index(self) -> list[tuple[int, int]]:
         clip_len = (self.n_sample_frames - 1) * self.frame_offset + 1
         index = []
         for ep in self._episode_indices:
@@ -100,10 +99,10 @@ class PushTMaskHDF5Dataset(Dataset):
                 index.append((ep, start))
         return index
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._index)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict[str, Any]:
         episode_idx, start_frame = self._index[idx]
         frame_idxs = [start_frame + t * self.frame_offset
                       for t in range(self.n_sample_frames)]
@@ -117,7 +116,7 @@ class PushTMaskHDF5Dataset(Dataset):
             img = (frames.float() / 127.5) - 1.0
             img = img.permute(0, 3, 1, 2)
         else:
-            frames = self.h5['pixels'][abs_idxs]
+            frames = np.asarray(self.h5['pixels'])[abs_idxs]
             video = (frames.astype(np.float32) / 127.5) - 1.0
             img = torch.from_numpy(video.transpose(0, 3, 1, 2))
 
@@ -127,11 +126,11 @@ class PushTMaskHDF5Dataset(Dataset):
         }
 
         if 'action' in self.h5:
-            act = self.h5['action'][abs_idxs]
+            act = np.asarray(self.h5['action'])[abs_idxs]
             item['action'] = torch.from_numpy(act.astype(np.float32))
 
         if self.load_masks:
-            masks = {k: self.h5[k][abs_idxs] for k in self.MASK_KEYS}
+            masks = {k: np.asarray(self.h5[k])[abs_idxs] for k in self.MASK_KEYS}
             agent_m = torch.from_numpy((masks['agent_masks'] > 127).astype(np.float32))
             block_m = torch.from_numpy((masks['block_masks'] > 127).astype(np.float32))
             if self.include_goal_mask:
@@ -144,7 +143,7 @@ class PushTMaskHDF5Dataset(Dataset):
 
         return item
 
-    def __del__(self):
+    def __del__(self) -> None:
         if self._h5 is not None:
             self._h5.close()
             self._h5 = None
@@ -161,13 +160,13 @@ class DeterministicEpisodeEvalDataset(Dataset):
         self,
         h5_path: str,
         split: str = 'val',
-        resolution=(64, 64),
+        resolution: tuple[int, int] = (64, 64),
         n_sample_frames: int = 6,
         clips_per_episode: int = 2,
         seed: int = 42,
-        base_seed: int = None,
+        base_seed: Optional[int] = None,
         include_goal_mask: bool = True,
-    ):
+    ) -> None:
         self.h5_path = h5_path
         self.split = split
         self.resolution = resolution
@@ -180,12 +179,9 @@ class DeterministicEpisodeEvalDataset(Dataset):
         self.seed = seed
 
         with h5py.File(h5_path, 'r') as f:
-            ep_lens = f['ep_len'][:]
-            ep_offs = f['ep_offset'][:]
-
-        self._ep_lens = ep_lens.tolist()
-        self._ep_offs = ep_offs.tolist()
-        n_episodes = len(ep_lens)
+            self._ep_lens = np.asarray(f['ep_len']).tolist()
+            self._ep_offs = np.asarray(f['ep_offset']).tolist()
+        n_episodes = len(self._ep_lens)
 
         rng = np.random.RandomState(seed)
         idx = rng.permutation(n_episodes)
@@ -199,12 +195,12 @@ class DeterministicEpisodeEvalDataset(Dataset):
         self._index = self._build_index()
 
     @property
-    def h5(self):
+    def h5(self) -> h5py.File:
         if self._h5 is None:
             self._h5 = h5py.File(self.h5_path, 'r')
         return self._h5
 
-    def _build_index(self):
+    def _build_index(self) -> list[tuple[int, int]]:
         clip_len = self.n_sample_frames
         index = []
         for ep in self._episode_indices:
@@ -222,17 +218,17 @@ class DeterministicEpisodeEvalDataset(Dataset):
                 index.append((ep, start))
         return index
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._index)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict[str, Any]:
         episode_idx, start_frame = self._index[idx]
         frame_idxs = list(range(start_frame, start_frame + self.n_sample_frames))
         offset = int(self._ep_offs[episode_idx])
         abs_idxs = [offset + i for i in frame_idxs]
 
-        frames = self.h5['pixels'][abs_idxs]
-        masks = {k: self.h5[k][abs_idxs] for k in self.MASK_KEYS}
+        frames = np.asarray(self.h5['pixels'])[abs_idxs]
+        masks = {k: np.asarray(self.h5[k])[abs_idxs] for k in self.MASK_KEYS}
 
         video = (frames.astype(np.float32) / 127.5) - 1.0
         img = torch.from_numpy(video.transpose(0, 3, 1, 2))
@@ -255,7 +251,7 @@ class DeterministicEpisodeEvalDataset(Dataset):
             'start_frame': start_frame,
         }
 
-    def __del__(self):
-        if getattr(self, '_h5', None) is not None:
+    def __del__(self) -> None:
+        if self._h5 is not None:
             self._h5.close()
             self._h5 = None

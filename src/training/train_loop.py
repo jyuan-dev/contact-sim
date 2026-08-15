@@ -23,7 +23,7 @@ import time
 import traceback
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import torch
@@ -174,7 +174,7 @@ def run_epoch(
             }
 
             try:
-                with torch.amp.autocast(device.type, enabled=cfg.use_amp):
+                with torch.autocast(device.type, enabled=cfg.use_amp):
                     out = model(batch_device)
                     loss, loss_dict = model.compute_loss(out, batch_device)
             except ValueError as err:
@@ -202,6 +202,7 @@ def run_epoch(
 
             # ── Backward / optimize ───────────────────────────────────────
             if is_train:
+                assert optimizer is not None and scaler is not None
                 optimizer.zero_grad()
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -416,7 +417,7 @@ def run_training(
 
 class _null_context:
     """No-op context manager (replaces ``contextlib.nullcontext`` for Py 3.6 compat)."""
-    def __enter__(self):
+    def __enter__(self) -> "_null_context":
         return self
-    def __exit__(self, *args):
+    def __exit__(self, *args: Any) -> None:
         pass

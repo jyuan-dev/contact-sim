@@ -6,6 +6,7 @@ Enforces slot representation consistency across timesteps (t -> t+1) while repel
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Any, Union
 
 
 class TemporalSlotContrastiveLoss(nn.Module):
@@ -13,12 +14,12 @@ class TemporalSlotContrastiveLoss(nn.Module):
     Temporal Slot Contrastive Loss Module.
     """
 
-    def __init__(self, weight: float = 1.0, temperature: float = 0.07):
+    def __init__(self, weight: float = 1.0, temperature: float = 0.07) -> None:
         super().__init__()
         self.weight = weight
         self.temperature = temperature
 
-    def forward(self, out, batch=None):
+    def forward(self, out: Union[dict, torch.Tensor, None], batch: Any = None) -> tuple[torch.Tensor, float]:
         if isinstance(out, dict):
             post_slots = out["post_slots"]
             if post_slots is None:
@@ -27,6 +28,7 @@ class TemporalSlotContrastiveLoss(nn.Module):
         else:
             post_slots = out
 
+        assert post_slots is not None
         if post_slots.ndim != 4 or post_slots.shape[1] < 2:
             raw_loss = torch.tensor(0.0, device=post_slots.device, dtype=post_slots.dtype)
             return self.weight * raw_loss, 0.0

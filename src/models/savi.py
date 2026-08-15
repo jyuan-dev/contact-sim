@@ -25,51 +25,59 @@ extract_slots rely on: ``encode``, ``decode``, ``_get_encoder_out``,
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Any, Optional, Union
 
-from src.utils.tensor_checks import check_tensor_shape
+from jaxtyping import Float
+
+from src.utils.tensor_checks import check_tensor_shape, typechecked
 
 
 # ── CNN / shape helpers ───────────────────────────────────────────────────────
 
-def deconv_out_shape(in_size, stride=1, padding=0, kernel_size=1, output_padding=0):
-    if isinstance(in_size, (list, tuple)):
-        in_size = in_size[0]
-    return (in_size - 1) * stride - 2 * padding + kernel_size + output_padding
+def deconv_out_shape(in_size: Union[int, tuple, list], stride: int = 1,
+                     padding: int = 0, kernel_size: int = 1,
+                     output_padding: int = 0) -> int:
+    size = in_size[0] if isinstance(in_size, (list, tuple)) else in_size
+    return (size - 1) * stride - 2 * padding + kernel_size + output_padding
 
 
-def conv_norm_act(in_channels, out_channels, kernel_size=5, stride=1,
-                  padding=None, act='relu'):
+def conv_norm_act(in_channels: int, out_channels: int, kernel_size: int = 5,
+                  stride: int = 1, padding: Optional[int] = None,
+                  act: str = 'relu') -> nn.Sequential:
     if padding is None:
         padding = kernel_size // 2
-    layers = [nn.Conv2d(in_channels, out_channels, kernel_size,
-                        stride=stride, padding=padding)]
+    layers: list[nn.Module] = [nn.Conv2d(in_channels, out_channels, kernel_size,
+                                         stride=stride, padding=padding)]
     if act == 'relu':
         layers.append(nn.ReLU(inplace=True))
     return nn.Sequential(*layers)
 
 
-def deconv_norm_act(in_channels, out_channels, kernel_size=5, stride=1,
-                    padding=None, output_padding=None, act='relu'):
+def deconv_norm_act(in_channels: int, out_channels: int, kernel_size: int = 5,
+                    stride: int = 1, padding: Optional[int] = None,
+                    output_padding: Optional[int] = None,
+                    act: str = 'relu') -> nn.Sequential:
     if padding is None:
         padding = kernel_size // 2
     if output_padding is None:
         output_padding = stride - 1
-    layers = [nn.ConvTranspose2d(in_channels, out_channels, kernel_size,
-                                 stride=stride, padding=padding,
-                                 output_padding=output_padding)]
+    layers: list[nn.Module] = [nn.ConvTranspose2d(in_channels, out_channels, kernel_size,
+                                                  stride=stride, padding=padding,
+                                                  output_padding=output_padding)]
     if act == 'relu':
         layers.append(nn.ReLU(inplace=True))
     return nn.Sequential(*layers)
 
 
-def assert_shape(actual, expected, message=""):
+def assert_shape(actual: Union[tuple, list], expected: Union[tuple, list],
+                 message: str = "") -> None:
     assert list(actual) == list(expected), \
         f"Expected shape: {expected} but passed shape: {actual}. {message}"
 
 
 # ── Position embedding ────────────────────────────────────────────────────────
 
-def build_grid(resolution):
+def build_grid(resolution: tuple) -> torch.Tensor:
     """Return a coordinate grid with shape [1, H, W, 4]."""
     ranges = [torch.linspace(0.0, 1.0, steps=res) for res in resolution]
     grid = torch.meshgrid(*ranges, indexing='ij')
@@ -82,12 +90,12 @@ def build_grid(resolution):
 class SoftPositionEmbed(nn.Module):
     """Add a learned embedding of normalized coordinates to a feature map."""
 
-    def __init__(self, hidden_size, resolution):
+    def __init__(self, hidden_size: int, resolution: tuple) -> None:
         super().__init__()
         self.dense = nn.Linear(in_features=4, out_features=hidden_size)
         self.register_buffer('grid', build_grid(resolution))  # [1, H, W, 4]
 
-    def forward(self, inputs):
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """inputs: [B, C, H, W]."""
         emb_proj = self.dense(self.grid).permute(0, 3, 1, 2)
         return inputs + emb_proj
@@ -108,7 +116,7 @@ class SlotAttention(nn.Module):
         mlp_hidden_size: int,
         eps: float = 1e-6,
         use_residual_bn: bool = False,
-    ):
+    ) -> None:
         super().__init__()
         self.in_features = in_features
         self.num_iterations = num_iterations
@@ -139,11 +147,15 @@ class SlotAttention(nn.Module):
         )
         self.residual_bn = nn.BatchNorm1d(self.slot_size) if use_residual_bn else None
 
-    def forward(self, inputs: torch.Tensor, slots: torch.Tensor) -> torch.Tensor:
+    @typechecked
+    def forward(self, inputs: Float[torch.Tensor, "B N C"],
+                slots: Float[torch.Tensor, "B K D"]) -> torch.Tensor:
         """`inputs`: [B, N, C] flattened per-pixel features,
-        `slots`: [B, num_slots, C] slot inits."""
-        check_tensor_shape(inputs, "inputs", ndim=3)
-        check_tensor_shape(slots, "slots", ndim=3)
+        `slots`: [B, num_slots, C] slot inits.
+
+        The last dims use distinct names (C vs D) so no accidental
+        cross-argument equality is implied.
+        """
         bs, num_inputs, inputs_size = inputs.shape
         inputs = self.norm_inputs(inputs)
         k = self.project_k(inputs)  # [B, num_inputs, slot_size]
@@ -172,11 +184,11 @@ class SlotAttention(nn.Module):
         return slots
 
     @property
-    def dtype(self):
+    def dtype(self) -> torch.dtype:
         return self.project_k.weight.dtype
 
     @property
-    def device(self):
+    def device(self) -> torch.device:
         return self.project_k.weight.device
 
 
@@ -191,12 +203,12 @@ class TransformerPredictor(nn.Module):
 
     def __init__(
         self,
-        d_model=128,
-        num_layers=1,
-        num_heads=4,
-        ffn_dim=256,
-        norm_first=True,
-    ):
+        d_model: int = 128,
+        num_layers: int = 1,
+        num_heads: int = 4,
+        ffn_dim: int = 256,
+        norm_first: bool = True,
+    ) -> None:
         super().__init__()
         transformer_enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -207,7 +219,7 @@ class TransformerPredictor(nn.Module):
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer=transformer_enc_layer, num_layers=num_layers)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.transformer_encoder(x)
 
 
@@ -216,11 +228,11 @@ class RNNPredictorWrapper(nn.Module):
 
     def __init__(
         self,
-        base_predictor,
-        input_size=128,
-        hidden_size=256,
-        num_layers=1,
-    ):
+        base_predictor: nn.Module,
+        input_size: int = 128,
+        hidden_size: int = 256,
+        num_layers: int = 1,
+    ) -> None:
         super().__init__()
         self.base_predictor = base_predictor
         self.rnn = nn.LSTM(input_size=input_size, hidden_size=hidden_size,
@@ -228,7 +240,7 @@ class RNNPredictorWrapper(nn.Module):
         self.out_projector = nn.Linear(hidden_size, input_size)
         self.hidden_state = None
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = self.base_predictor(x)
         out_shape = out.shape
         # Re-pack cuDNN weights after optimizer steps (cheap no-op when fresh).
@@ -237,7 +249,7 @@ class RNNPredictorWrapper(nn.Module):
             out.view(1, -1, out_shape[-1]), self.hidden_state)
         return self.out_projector(out[0]).view(out_shape)
 
-    def reset(self):
+    def reset(self) -> None:
         """Clear the LSTM hidden state."""
         self.hidden_state = None
 
@@ -249,17 +261,18 @@ class StoSAVi(nn.Module):
 
     def __init__(
         self,
-        resolution,
-        clip_len,
-        slot_dict=None,
-        enc_dict=None,
-        dec_dict=None,
-        pred_dict=None,
-        loss_dict=None,  # accepted for config compatibility; unused (deterministic SAVi)
+        resolution: tuple,
+        clip_len: int,
+        slot_dict: Optional[dict[str, Any]] = None,
+        enc_dict: Optional[dict[str, Any]] = None,
+        dec_dict: Optional[dict[str, Any]] = None,
+        pred_dict: Optional[dict[str, Any]] = None,
+        # accepted for config compatibility; unused (deterministic SAVi)
+        loss_dict: Optional[dict[str, Any]] = None,
         use_encoder_bn: bool = False,
         use_residual_bn: bool = False,
-        eps=1e-6,
-    ):
+        eps: float = 1e-6,
+    ) -> None:
         super().__init__()
         slot_dict = dict(
             num_slots=7,
@@ -296,7 +309,8 @@ class StoSAVi(nn.Module):
         self._build_decoder(dec_dict)
         self._build_predictor(pred_dict)
 
-    def _build_slot_attention(self, slot_dict, enc_dict):
+    def _build_slot_attention(self, slot_dict: dict[str, Any],
+                              enc_dict: dict[str, Any]) -> None:
         self.enc_out_channels = enc_dict['enc_out_channels']
         self.num_slots = slot_dict['num_slots']
         self.slot_size = slot_dict['slot_size']
@@ -334,7 +348,7 @@ class StoSAVi(nn.Module):
             use_residual_bn=self.use_residual_bn,
         )
 
-    def _build_encoder(self, enc_dict):
+    def _build_encoder(self, enc_dict: dict[str, Any]) -> None:
         self.enc_channels = list(enc_dict['enc_channels'])  # CNN channels
         self.enc_ks = enc_dict['enc_ks']  # kernel size in CNN
         self.visual_resolution = (64, 64)  # CNN out visual resolution
@@ -363,7 +377,7 @@ class StoSAVi(nn.Module):
         )
         self.encoder_bn = nn.BatchNorm1d(self.enc_out_channels) if self.use_encoder_bn else None
 
-    def _build_decoder(self, dec_dict):
+    def _build_decoder(self, dec_dict: dict[str, Any]) -> None:
         self.dec_channels = dec_dict['dec_channels']  # CNN channels
         self.dec_resolution = dec_dict['dec_resolution']  # broadcast size
         self.dec_ks = dec_dict['dec_ks']  # kernel size
@@ -402,7 +416,7 @@ class StoSAVi(nn.Module):
         self.decoder_pos_embedding = SoftPositionEmbed(self.slot_size,
                                                        self.dec_resolution)
 
-    def _build_predictor(self, pred_dict):
+    def _build_predictor(self, pred_dict: dict[str, Any]) -> None:
         """Predictor transitioning slots from time t to t+1:
         Transformer (object interaction) wrapped in LSTM (scene dynamics)."""
         self.predictor = TransformerPredictor(
@@ -420,12 +434,12 @@ class StoSAVi(nn.Module):
                 num_layers=1,
             )
 
-    def _sample_dist(self, dist):
+    def _sample_dist(self, dist: torch.Tensor) -> torch.Tensor:
         """Deterministic sampling: return the mean half of (mu, log-var)."""
         assert dist.shape[-1] == self.slot_size * 2
         return dist[..., :self.slot_size]
 
-    def _get_encoder_out(self, img):
+    def _get_encoder_out(self, img: torch.Tensor) -> torch.Tensor:
         """Encode image, add pos embed, project, optionally BatchNorm.
 
         `img`: [B, C, H, W] -> [B, H*W, enc_out_channels].
@@ -440,13 +454,14 @@ class StoSAVi(nn.Module):
             encoder_out = self.encoder_bn(encoder_out.view(B * HW, C)).view(B, HW, C)
         return encoder_out
 
-    def encode(self, img, prev_slots=None):
+    @typechecked
+    def encode(self, img: Float[torch.Tensor, "B T C H W"],
+               prev_slots: Optional[torch.Tensor] = None) -> tuple:
         """Encode a clip to post-slots.
 
         Returns (post_slots [B, T, num_slots, slot_size],
                  encoder_out [B, T, H*W, enc_out_channels]).
         """
-        check_tensor_shape(img, "img", ndim=5)
         B, T, C, H, W = img.shape
         if prev_slots is not None:
             check_tensor_shape(prev_slots, "prev_slots", ndim=3,
@@ -471,10 +486,10 @@ class StoSAVi(nn.Module):
 
         return torch.stack(all_post_slots, dim=1), encoder_out
 
-    def _reset_rnn(self):
+    def _reset_rnn(self) -> None:
         self.predictor.reset()
 
-    def forward(self, data_dict):
+    def forward(self, data_dict: dict) -> dict:
         """Forward pass. `data_dict['img']`: [B, T, C, H, W]."""
         if not isinstance(data_dict, dict):
             raise TypeError(f"data_dict must be a dict, got {type(data_dict).__name__}")
@@ -482,7 +497,8 @@ class StoSAVi(nn.Module):
             raise ValueError("data_dict must contain the 'img' key")
         return self._forward(data_dict['img'], None)
 
-    def _forward(self, img, prev_slots=None):
+    def _forward(self, img: torch.Tensor,
+                 prev_slots: Optional[torch.Tensor] = None) -> dict:
         if prev_slots is None:
             self._reset_rnn()
 
@@ -502,12 +518,12 @@ class StoSAVi(nn.Module):
         })
         return out_dict
 
-    def decode(self, slots):
+    @typechecked
+    def decode(self, slots: Float[torch.Tensor, "B K D"]) -> tuple:
         """Decode slots to reconstructed images and masks.
 
         `slots`: [B, num_slots, slot_size].
         """
-        check_tensor_shape(slots, "slots", ndim=3)
         bs, num_slots, slot_size = slots.shape
         height, width = self.resolution
         num_channels = 3
@@ -529,11 +545,11 @@ class StoSAVi(nn.Module):
         return recon_combined, recons, masks, slots
 
     @property
-    def dtype(self):
+    def dtype(self) -> torch.dtype:
         return self.init_latents.dtype
 
     @property
-    def device(self):
+    def device(self) -> torch.device:
         return self.init_latents.device
 
 
@@ -550,20 +566,20 @@ class SAVi(nn.Module):
 
     def __init__(
         self,
-        resolution=(64, 64),
-        clip_len=6,
-        num_slots=4,
-        slot_dim=64,
-        num_iterations=3,
-        in_channels=3,
+        resolution: tuple = (64, 64),
+        clip_len: int = 6,
+        num_slots: int = 4,
+        slot_dim: int = 64,
+        num_iterations: int = 3,
+        in_channels: int = 3,
         use_encoder_bn: bool = False,
         use_residual_bn: bool = False,
-        slot_dict=None,
-        enc_dict=None,
-        dec_dict=None,
-        pred_dict=None,
-        loss_dict=None,
-    ):
+        slot_dict: Optional[dict[str, Any]] = None,
+        enc_dict: Optional[dict[str, Any]] = None,
+        dec_dict: Optional[dict[str, Any]] = None,
+        pred_dict: Optional[dict[str, Any]] = None,
+        loss_dict: Optional[dict[str, Any]] = None,
+    ) -> None:
         super().__init__()
         self.resolution = tuple(resolution)
         self.use_encoder_bn = use_encoder_bn
@@ -609,21 +625,22 @@ class SAVi(nn.Module):
         )
 
     @property
-    def encoder_bn(self):
+    def encoder_bn(self) -> Optional[nn.BatchNorm1d]:
         return self.model.encoder_bn
 
     @property
-    def dtype(self):
+    def dtype(self) -> torch.dtype:
         return self.model.dtype
 
-    def load_state_dict(self, state_dict, strict=True):
+    def load_state_dict(self, state_dict: dict[str, torch.Tensor],
+                        strict: bool = True) -> Any:
         """Handle state dicts for both the wrapper ('model.'-prefixed keys)
         and the bare core model."""
         if any(k.startswith('model.') for k in state_dict.keys()):
             return super().load_state_dict(state_dict, strict=strict)
         return self.model.load_state_dict(state_dict, strict=strict)
 
-    def forward(self, x, **kwargs):
+    def forward(self, x: Union[torch.Tensor, dict], **kwargs: Any) -> dict:
         """Forward pass. Accepts tensor [B, T, C, H, W] or dict {'img': ...}."""
         if isinstance(x, torch.Tensor):
             check_tensor_shape(x, "x", ndim=5)

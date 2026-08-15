@@ -5,7 +5,8 @@ Base Trainer class encapsulating TensorBoard logging, file logging, checkpoint s
 import os
 import sys
 import torch
-from torch.utils.tensorboard import SummaryWriter
+from typing import Optional
+from torch.utils.tensorboard import SummaryWriter  # type: ignore[reportPrivateImportUsage]
 
 class TeeLogger:
     """
@@ -18,19 +19,19 @@ class TeeLogger:
                 - 'a' (Append, Default): Appends new log messages to the end of an existing log file.
                 - 'w' (Overwrite): Overwrites and truncates any existing log file at startup.
     """
-    def __init__(self, filepath: str, mode: str = 'a'):
+    def __init__(self, filepath: str, mode: str = 'a') -> None:
         self.terminal = sys.stdout
         self.log_file = open(filepath, mode, buffering=1)
 
-    def write(self, message):
+    def write(self, message: str) -> None:
         self.terminal.write(message)
         self.log_file.write(message)
 
-    def flush(self):
+    def flush(self) -> None:
         self.terminal.flush()
         self.log_file.flush()
 
-    def close(self):
+    def close(self) -> None:
         if not self.log_file.closed:
             self.log_file.close()
 
@@ -55,8 +56,8 @@ class BaseTrainer:
         mode: str = 'a',
         use_wandb: bool = True,
         wandb_project: str = "pusht-contact-sim",
-        cfg_dict: dict = None,
-    ):
+        cfg_dict: Optional[dict] = None,
+    ) -> None:
         self.save_dir = save_dir
         self.experiment_name = experiment_name
         self.use_wandb = use_wandb
@@ -93,7 +94,7 @@ class BaseTrainer:
         print(f"[{self.experiment_name}] Dedicated train log: {self.log_path}", flush=True)
         print(f"💡 HINT: To monitor real-time training progress, view the tail of the log file:\n   tail -f {self.log_path}\n", flush=True)
 
-    def log_scalar(self, tag: str, scalar_value: float, global_step: int):
+    def log_scalar(self, tag: str, scalar_value: float, global_step: int) -> None:
         self.writer.add_scalar(tag, scalar_value, global_step)
         if self.use_wandb and self.wandb_run:
             try:
@@ -102,10 +103,10 @@ class BaseTrainer:
             except Exception:
                 pass
 
-    def log_image(self, tag: str, img_tensor: torch.Tensor, global_step: int):
+    def log_image(self, tag: str, img_tensor: torch.Tensor, global_step: int) -> None:
         self.writer.add_image(tag, img_tensor, global_step)
 
-    def close(self):
+    def close(self) -> None:
         print(f"\n💡 HINT: Training completed! Inspect the tail of the log file using:\n   tail -n 50 {self.log_path}\n", flush=True)
         if self.writer:
             self.writer.close()
