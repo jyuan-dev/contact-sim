@@ -242,9 +242,14 @@ class RunConfig:
         """Emit the resolved plain dict consumers expect (legacy shape)."""
         d: dict[str, Any] = {}
         for f in fields(TrainSection):
-            # Emit every field including None — legacy snapshots carry
-            # explicit nulls (ckpt_path: null, scheduler: null, ...).
-            d[f.name] = getattr(self.train, f.name)
+            value = getattr(self.train, f.name)
+            # warmup_steps/min_lr never existed in the legacy config shape;
+            # emitting them as None would crash consumers doing int(None).
+            if value is None and f.name in ("warmup_steps", "min_lr"):
+                continue
+            # Everything else is emitted including None — legacy snapshots
+            # carry explicit nulls (ckpt_path: null, scheduler: null, ...).
+            d[f.name] = value
 
         model_d: dict[str, Any] = {
             "name": self.model.name,

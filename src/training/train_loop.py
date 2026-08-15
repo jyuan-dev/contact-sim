@@ -94,8 +94,8 @@ class TrainConfig:
             ckpt_dir=ckpt_dir,
             model_name=model_name,
             scheduler=cfg.get("scheduler"),
-            warmup_steps=int(cfg.get("warmup_steps", 1000)),
-            min_lr=float(cfg.get("min_lr", 1e-5)),
+            warmup_steps=int(cfg.get("warmup_steps") or 1000),
+            min_lr=float(cfg.get("min_lr") or 1e-5),
         )
 
 
