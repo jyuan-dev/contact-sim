@@ -27,7 +27,7 @@ from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
 from src.utils.data_utils import find_dataset_path
 
 
-def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch_size=64, device='cpu', h5_path=None):
+def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch_size=64, device='cpu', h5_path=None, train_frac=0.8):
     print("=" * 80)
     print(f"Deterministic Per-Episode Evaluation: {ckpt_path}")
     print(f"  Base Seed: {base_seed} | Clips per Episode: {clips_per_ep} | Device: {device}")
@@ -40,6 +40,7 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
         n_sample_frames=6,
         clips_per_episode=clips_per_ep,
         base_seed=base_seed,
+        train_frac=train_frac,
     )
     val_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
@@ -212,7 +213,9 @@ def main(cfg: DictConfig):
         base_seed = int(cfg.get('seed', 42))
         clips_per_ep = int(cfg.get('clips_per_ep', 2))
         batch_size = int(cfg.get('batch_size', 64))
-        run_deterministic_eval(model, ckpt_path, base_seed=base_seed, clips_per_ep=clips_per_ep, batch_size=batch_size, device=device)
+        train_frac = float(cfg_dict.get('dataset', {}).get('train_frac', 0.8))
+        run_deterministic_eval(model, ckpt_path, base_seed=base_seed, clips_per_ep=clips_per_ep,
+                               batch_size=batch_size, device=device, train_frac=train_frac)
     else:
         # The former visualize branch evaluated zero-filled masks and rendered
         # nothing — fail loudly instead of reporting fake numbers.

@@ -167,6 +167,7 @@ class DeterministicEpisodeEvalDataset(Dataset):
         clips_per_episode: int = 2,
         seed: int = 42,
         base_seed: Optional[int] = None,
+        train_frac: float = 0.8,
         include_goal_mask: bool = True,
     ) -> None:
         self.h5_path = h5_path
@@ -174,6 +175,7 @@ class DeterministicEpisodeEvalDataset(Dataset):
         self.resolution = resolution
         self.n_sample_frames = n_sample_frames
         self.clips_per_episode = clips_per_episode
+        self.train_frac = train_frac
         self.include_goal_mask = include_goal_mask
         self._h5 = None
         if base_seed is not None:
@@ -187,7 +189,7 @@ class DeterministicEpisodeEvalDataset(Dataset):
 
         rng = np.random.RandomState(seed)
         idx = rng.permutation(n_episodes)
-        n_train = int(n_episodes * 0.9)
+        n_train = int(n_episodes * self.train_frac)
 
         if split == 'train':
             self._episode_indices = sorted(idx[:n_train].tolist())
@@ -210,11 +212,14 @@ class DeterministicEpisodeEvalDataset(Dataset):
             if ep_len < clip_len:
                 continue
             max_start = ep_len - clip_len
-            ep_rng = np.random.RandomState(ep + 1000)
-            if max_start == 0:
-                starts = [0] * self.clips_per_episode
-            else:
-                starts = ep_rng.randint(0, max_start + 1, size=self.clips_per_episode).tolist()
+            # Per-episode seed derived from the base seed (reproducible across
+            # runs and code changes); sample distinct starts without
+            # replacement so duplicate clips are never counted.
+            ep_rng = np.random.RandomState(self.seed + ep * 10007)
+            n_valid_starts = max_start + 1
+            n_clips = min(self.clips_per_episode, n_valid_starts)
+            starts = ep_rng.choice(n_valid_starts, size=n_clips,
+                                   replace=False).tolist()
 
             for start in starts:
                 index.append((ep, start))

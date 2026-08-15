@@ -81,6 +81,22 @@ class TestModelRegistry(unittest.TestCase):
         model = build_model(cfg)
         self.assertIsInstance(model, StandardizedSAViWrapper)
 
+    def test_slotformer_missing_stage1_checkpoint_raises(self):
+        """A configured-but-missing stage-1 checkpoint must fail loudly."""
+        cfg = {
+            "model": {
+                "name": "slotformer",
+                "type": "slotformer",
+                "stage1_ckpt_path": "/nonexistent/stage1_model.pt",
+                "d_model": 32,
+                "num_layers": 1,
+                "num_heads": 4,
+                "ffn_dim": 64,
+            }
+        }
+        with self.assertRaises(FileNotFoundError):
+            build_model(cfg)
+
     def test_build_model_unknown_raises_value_error(self):
         """build_model with an unknown type should raise ValueError listing available models."""
         cfg = {'model': {'name': 'nonexistent_model_xyz', 'type': 'nonexistent_model_xyz'}}

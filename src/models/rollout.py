@@ -6,6 +6,8 @@ Supports both Stage 1 SAVi predictor fallback and Stage 2 SlotFormer Transformer
 
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,6 +21,8 @@ def predict_slot_rollout(
     wrapper_model: nn.Module,
     video: Float[torch.Tensor, "B T C H W"],
     n_cond_frames: int = 2,
+    actions: torch.Tensor | None = None,
+    goal_slots: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     """
     Perform autoregressive future slot rollout.
@@ -28,6 +32,10 @@ def predict_slot_rollout(
                        instance.
         video: [B, T, C, H, W] video clip tensor.
         n_cond_frames: Number of initial context frames to condition on (e.g. 2).
+        actions: action sequence for action-conditioned rollouters (cOCVP/PIDM),
+            [B, T_act, action_dim] or None.
+        goal_slots: goal conditioning slots for goal-conditioned rollouts
+            (PIDM), [B, num_slots, slot_size] or None.
 
     Returns:
         Dict containing:
@@ -68,8 +76,18 @@ def predict_slot_rollout(
     # 2. Autoregressive Rollout phase: for frames n_cond_frames .. T - 1
     if rollout_len > 0:
         if rollouter is not None:
-            # Use Stage 2 Transformer Rollouter (SlotFormer)
-            rollout_slots_tensor = rollouter(cond_slots_tensor, pred_len=rollout_len)
+            # Use Stage 2 Transformer Rollouter (SlotFormer). Pass the
+            # conditioning through when the rollouter accepts it, so
+            # action/goal-conditioned models are not silently evaluated
+            # on their unconditioned branch.
+            roll_kwargs: dict[str, Any] = {"pred_len": rollout_len}
+            if hasattr(rollouter.forward, "__code__"):
+                varnames = rollouter.forward.__code__.co_varnames
+                if actions is not None and "actions" in varnames:
+                    roll_kwargs["actions"] = actions
+                if goal_slots is not None and "goal_slots" in varnames:
+                    roll_kwargs["goal_slots"] = goal_slots
+            rollout_slots_tensor = rollouter(cond_slots_tensor, **roll_kwargs)
         else:
             # Fallback to Stage 1 SAVi GRU predictor
             rollout_slots = []

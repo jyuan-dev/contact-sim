@@ -79,7 +79,12 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
             load_checkpoint_state(stage1_wrapper, stage1_ckpt_path)
             print(f"[SlotFormer] Loaded pretrained Stage 1 experiment from: {stage1_ckpt_path}")
         else:
-            print(f"[SlotFormer Warning] Stage 1 checkpoint path '{stage1_ckpt_path}' not found!")
+            if stage1_ckpt_path:
+                # A configured-but-missing stage-1 checkpoint means stage-2
+                # would silently train against random frozen slots — fail
+                # loudly instead.
+                raise FileNotFoundError(
+                    f"[SlotFormer] Stage 1 checkpoint not found: {stage1_ckpt_path}")
             stage1_wrapper = build_model(stage1_cfg)
 
         history_len = model_cfg.get("history_len", 2)

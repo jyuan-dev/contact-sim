@@ -120,6 +120,31 @@ class TestDeterministicEpisodeEvalDatasetCoverage(unittest.TestCase):
         self.assertTrue(all(ep in ds._episode_indices for ep, _ in ds._index))
         del ds  # close h5 handle
 
+    @unittest.skipUnless(
+        os.path.exists('/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5'),
+        "PushT h5 dataset not available",
+    )
+    def test_no_duplicate_clips_and_split_fraction(self):
+        from src.datasets.pusht import DeterministicEpisodeEvalDataset
+
+        ds = DeterministicEpisodeEvalDataset(
+            h5_path='/home/jyuan/.stable-wm/pusht_expert_train_64x64.h5',
+            split='val',
+            resolution=(64, 64),
+            n_sample_frames=6,
+            clips_per_episode=2,
+            base_seed=42,
+            train_frac=0.8,
+        )
+        # distinct clip starts per episode (no sample-with-replacement dupes)
+        self.assertEqual(len(ds._index), len(set(ds._index)))
+        # val split is the configured 20% of episodes
+        import h5py
+        with h5py.File(ds.h5_path, 'r') as f:
+            n_episodes = len(f['ep_len'])
+        self.assertEqual(len(ds._episode_indices), int(n_episodes * 0.2))
+        del ds  # close h5 handle
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -219,7 +219,10 @@ def evaluate_closed_loop(
     print("=" * 70)
 
     static_z_goal = None
-    if goal_mode == "static":
+    if goal_mode in ("static", "pidm"):
+        # Both modes plan toward the static goal area; 'pidm' needs the goal
+        # too — otherwise plan_action runs with goal_video_or_slots=None and
+        # silently degrades to an unconditioned rollout.
         static_z_goal = get_static_goal_slots(model_wrapper, device)
 
     for ep in range(num_episodes):

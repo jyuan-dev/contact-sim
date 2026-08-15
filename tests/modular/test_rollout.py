@@ -38,9 +38,11 @@ class _FakeRollouter(nn.Module):
         super().__init__()
         self.K = K
         self.D = D
+        self.received_kwargs = None
 
-    def forward(self, cond_slots, pred_len=2):
+    def forward(self, cond_slots, pred_len=2, actions=None, goal_slots=None):
         B = cond_slots.shape[0]
+        self.received_kwargs = {"actions": actions, "goal_slots": goal_slots}
         return torch.zeros(B, pred_len, self.K, self.D, device=cond_slots.device)
 
 
@@ -84,6 +86,32 @@ class TestPredictSlotRollout(unittest.TestCase):
         full_slots, _ = inner.encode(video)
         self.assertTrue(torch.allclose(out["post_slots"], full_slots, atol=1e-6, rtol=1e-6))
         self.assertTrue(torch.equal(out["is_rollout_mask"], torch.tensor([False] * 4)))
+
+    def test_stage2_passes_conditioning_through(self):
+        """actions/goal_slots reach rollouters whose forward accepts them."""
+        wrapper = _make_savi_wrapper()
+        fake_rollouter = _FakeRollouter(K=2, D=32)
+
+        class _FakeInner(nn.Module):
+            def __init__(self, stage1, rollouter):
+                super().__init__()
+                self.rollouter = rollouter
+                self.stage1_model = stage1
+
+        class _Stage2Wrapper(nn.Module):
+            def __init__(self, inner):
+                super().__init__()
+                self.model = inner
+
+        container = _Stage2Wrapper(_FakeInner(wrapper, fake_rollouter))
+        actions = torch.randn(2, 4, 2)
+        goal_slots = torch.randn(2, 2, 32)
+
+        predict_slot_rollout(container, _video(), n_cond_frames=2,
+                             actions=actions, goal_slots=goal_slots)
+
+        self.assertIs(fake_rollouter.received_kwargs["actions"], actions)
+        self.assertIs(fake_rollouter.received_kwargs["goal_slots"], goal_slots)
 
     def test_stage2_rollouter_branch(self):
         """Wrapper-of-model with rollouter + stage1: rollout frames come from the rollouter."""

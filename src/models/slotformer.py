@@ -313,10 +313,13 @@ class OCVPSlotRollouter(nn.Module):
         curr_x = x  # [B, history_len, num_slots, slot_size]
         pred_out = []
 
-        for _ in range(pred_len):
+        for i in range(pred_len):
             curr_t_len = curr_x.shape[1]
-            if act_emb_seq is not None and act_emb_seq.shape[1] >= curr_t_len:
-                a_sub = act_emb_seq[:, :curr_t_len]  # [B, curr_t_len, D_act]
+            # The window slides by one frame per step, so the actions that
+            # produced the frames in the current window are the slice
+            # [i, i + curr_t_len) — not a constant prefix.
+            if act_emb_seq is not None and act_emb_seq.shape[1] >= i + curr_t_len:
+                a_sub = act_emb_seq[:, i:i + curr_t_len]  # [B, curr_t_len, D_act]
                 a_sub_slots = a_sub.unsqueeze(2).repeat(1, 1, self.num_slots, 1)  # [B, curr_t_len, K, D_act]
 
                 if self.condition_mode == "sum":
