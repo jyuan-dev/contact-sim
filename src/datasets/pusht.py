@@ -112,12 +112,14 @@ class PushTMaskHDF5Dataset(Dataset):
 
         if self.preload_ram:
             pixels = get_shared_pixels(self.h5_path)
-            frames = pixels[abs_idxs]  # Zero-copy IPC shared memory slice
-            img = (frames.float() / 127.5) - 1.0
+            img = (pixels[abs_idxs].float() / 127.5) - 1.0  # Zero-copy IPC slice
             img = img.permute(0, 3, 1, 2)
         else:
-            frames = np.asarray(self.h5['pixels'])[abs_idxs]
-            video = (frames.astype(np.float32) / 127.5) - 1.0
+            # Direct h5 fancy-indexing — wrapping in np.asarray would
+            # materialize the whole 1.4GB dataset per item (~300x slower).
+            # The annotation narrows the static type; the value is an ndarray.
+            frames_h5: np.ndarray = self.h5['pixels'][abs_idxs]  # type: ignore[assignment]
+            video = (frames_h5.astype(np.float32) / 127.5) - 1.0
             img = torch.from_numpy(video.transpose(0, 3, 1, 2))
 
         item = {
@@ -126,11 +128,11 @@ class PushTMaskHDF5Dataset(Dataset):
         }
 
         if 'action' in self.h5:
-            act = np.asarray(self.h5['action'])[abs_idxs]
+            act: np.ndarray = self.h5['action'][abs_idxs]  # type: ignore[assignment]
             item['action'] = torch.from_numpy(act.astype(np.float32))
 
         if self.load_masks:
-            masks = {k: np.asarray(self.h5[k])[abs_idxs] for k in self.MASK_KEYS}
+            masks: dict[str, np.ndarray] = {k: self.h5[k][abs_idxs] for k in self.MASK_KEYS}  # type: ignore[assignment]
             agent_m = torch.from_numpy((masks['agent_masks'] > 127).astype(np.float32))
             block_m = torch.from_numpy((masks['block_masks'] > 127).astype(np.float32))
             if self.include_goal_mask:
@@ -227,10 +229,12 @@ class DeterministicEpisodeEvalDataset(Dataset):
         offset = int(self._ep_offs[episode_idx])
         abs_idxs = [offset + i for i in frame_idxs]
 
-        frames = np.asarray(self.h5['pixels'])[abs_idxs]
-        masks = {k: np.asarray(self.h5[k])[abs_idxs] for k in self.MASK_KEYS}
+        # Direct h5 fancy-indexing — np.asarray would materialize the whole
+        # dataset per item (~300x slower). Annotations narrow the static type.
+        frames_h5: np.ndarray = self.h5['pixels'][abs_idxs]  # type: ignore[assignment]
+        masks: dict[str, np.ndarray] = {k: self.h5[k][abs_idxs] for k in self.MASK_KEYS}  # type: ignore[assignment]
 
-        video = (frames.astype(np.float32) / 127.5) - 1.0
+        video = (frames_h5.astype(np.float32) / 127.5) - 1.0
         img = torch.from_numpy(video.transpose(0, 3, 1, 2))
 
         agent_m = (masks['agent_masks'] > 127).astype(np.float32)

@@ -96,6 +96,13 @@ def load_checkpoint_state(model: torch.nn.Module, ckpt_path: str,
 
     missing, unexpected = model.load_state_dict(adapted_state, strict=False)
 
+    # Legacy compat: pre-BatchNorm checkpoints lack the optional encoder_bn /
+    # residual_bn submodules — tolerate those missing keys when the model has
+    # BN enabled. (The inverse — BN keys present in the checkpoint but absent
+    # from the model — still raises as unexpected.)
+    missing = [k for k in missing
+               if "encoder_bn." not in k and "residual_bn." not in k]
+
     if missing:
         raise ValueError(
             f"Checkpoint is missing {len(missing)} key(s) required by the model. "

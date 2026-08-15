@@ -238,6 +238,8 @@ def evaluate_closed_loop(
         history_slot_list = []
         prev_action_tensor = None
 
+        history_len = getattr(inner_model, "history_len", 2)
+
         for step in range(max_steps):
             if save_gif and ep < num_gif_episodes:
                 ep_frames.append(obs.copy())
@@ -248,12 +250,17 @@ def evaluate_closed_loop(
                 current_slot = inner_model.extract_slots(obs_tensor)[:, 0]  # [1, K, D]
             history_slot_list.append(current_slot)
 
-            if len(history_slot_list) > 2:
+            if len(history_slot_list) > history_len:
                 history_slot_list.pop(0)
+
+            actor = getattr(inner_model, "idm_actor", getattr(inner_model, "intact_actor", None))
+            if actor is None:
+                raise RuntimeError(
+                    "Checkpoint has no idm_actor/intact_actor — action-conditioned "
+                    "goal modes require a PIDM/INTACT model.")
 
             if goal_mode == "static":
                 z_target = static_z_goal
-                actor = getattr(inner_model, "idm_actor", getattr(inner_model, "intact_actor", None))
                 with torch.no_grad():
                     act_mu, _ = actor(
                         z_curr=current_slot,
@@ -262,12 +269,11 @@ def evaluate_closed_loop(
                     )
                     predicted_delta = act_mu[0].cpu().numpy()
             elif goal_mode in ("world_model", "pidm"):
-                if len(history_slot_list) == 1:
-                    z_history = torch.cat([current_slot.unsqueeze(1), current_slot.unsqueeze(1)], dim=1)
+                if len(history_slot_list) < history_len:
+                    z_history = current_slot.unsqueeze(1).repeat(1, history_len, 1, 1)
                 else:
-                    z_history = torch.stack(history_slot_list, dim=1)  # [1, 2, K, D]
+                    z_history = torch.stack(history_slot_list, dim=1)  # [1, history_len, K, D]
 
-                actor = getattr(inner_model, "idm_actor", getattr(inner_model, "intact_actor", None))
                 with torch.no_grad():
                     if hasattr(inner_model, "plan_action"):
                         act_mu = inner_model.plan_action(

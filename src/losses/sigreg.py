@@ -37,19 +37,22 @@ def compute_sigreg_statistic(z: Float[torch.Tensor, "B T K D"], num_proj,
     weights[[0, -1]] = dt
     phi = torch.exp(-t.square() / 2.0)
 
-    # Sample random unit projections
-    generator = None
-    if seed is not None:
-        generator = torch.Generator(device=z.device).manual_seed(seed)
-    A = torch.randn(D, num_proj, device=z.device, generator=generator)
-    A = A / A.norm(p=2, dim=0).clamp_min(1e-8)
+    # The statistic is defined in fp32 (Le-WM reference); pin it so the
+    # surrounding train-loop autocast cannot silently run it in fp16.
+    with torch.autocast(z.device.type, enabled=False):
+        # Sample random unit projections
+        generator = None
+        if seed is not None:
+            generator = torch.Generator(device=z.device).manual_seed(seed)
+        A = torch.randn(D, num_proj, device=z.device, generator=generator)
+        A = A / A.norm(p=2, dim=0).clamp_min(1e-8)
 
-    # Epps-Pulley empirical characteristic function statistic
-    x_t = (proj @ A).unsqueeze(-1) * t  # (K, T, B, num_proj, knots)
-    err = (x_t.cos().mean(-3) - phi).square() + x_t.sin().mean(-3).square()  # (K, T, num_proj, knots)
-    statistic = (err @ (weights * phi)) * B  # (K, T, num_proj)
+        # Epps-Pulley empirical characteristic function statistic
+        x_t = (proj @ A).unsqueeze(-1) * t  # (K, T, B, num_proj, knots)
+        err = (x_t.cos().mean(-3) - phi).square() + x_t.sin().mean(-3).square()  # (K, T, num_proj, knots)
+        statistic = (err @ (weights * phi)) * B  # (K, T, num_proj)
 
-    return statistic.mean(dim=(-2, -1))  # (K,) - mean over time and projections
+        return statistic.mean(dim=(-2, -1))  # (K,) - mean over time and projections
 
 
 class SIGRegLoss(nn.Module):
@@ -74,6 +77,7 @@ class SIGRegLoss(nn.Module):
         self.knots = knots
         self.t_max = t_max
         self.seed = seed
+        self._warned_small_batch = False
 
     def forward(self, out: Union[dict, torch.Tensor, None], batch: Any = None) -> tuple[torch.Tensor, dict[str, float]]:
         if isinstance(out, dict):
@@ -85,7 +89,13 @@ class SIGRegLoss(nn.Module):
             return torch.tensor(0.0), {"sigreg_loss": 0.0}
 
         check_tensor_shape(z, "post_slots", ndim=4)
-        if z.numel() == 0 or z.shape[0] < 2:
+        if z.numel() == 0:
+            return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
+        if z.shape[0] < 2:
+            if not self._warned_small_batch:
+                self._warned_small_batch = True
+                print(f"[SIGReg] Warning: batch_size={z.shape[0]} < 2 — "
+                      "the statistic is undefined; loss set to 0.0.")
             return torch.tensor(0.0, device=z.device), {"sigreg_loss": 0.0}
 
         per_slot = compute_sigreg_statistic(

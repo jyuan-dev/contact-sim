@@ -58,10 +58,14 @@ def main(cfg: DictConfig) -> None:
     ckpt_dir = os.path.join(REPO_ROOT, "scratch", "checkpoints", cfg.exp_name)
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    # Save resolved config snapshot to checkpoint directory
-    config_save_path = os.path.join(ckpt_dir, "config.yaml")
-    with open(config_save_path, "w") as f:
-        f.write(OmegaConf.to_yaml(cfg, resolve=True))
+    # Save resolved config snapshot to checkpoint directory. Skipped on dry
+    # runs — they must not clobber the saved-config contract of an existing
+    # checkpoint dir (checkpoint loading depends on this file matching the
+    # saved weights).
+    if not cfg.get("dry_run", False):
+        config_save_path = os.path.join(ckpt_dir, "config.yaml")
+        with open(config_save_path, "w") as f:
+            f.write(OmegaConf.to_yaml(cfg, resolve=True))
 
     print("=" * 70)
     print(f"            Hydra Baseline Trainer ({cfg.model.name} / {cfg.dataset.name})")
@@ -81,7 +85,11 @@ def main(cfg: DictConfig) -> None:
 
     # ── Option: Resume from checkpoint if specified ───────────────────────
     if cfg.ckpt_path is not None:
-        load_checkpoint_state(model, cfg.ckpt_path, device=device)
+        ckpt_path = cfg.ckpt_path
+        if not os.path.isabs(ckpt_path):
+            # Hydra chdirs into outputs/ at runtime — resolve against the repo root.
+            ckpt_path = os.path.join(REPO_ROOT, ckpt_path)
+        load_checkpoint_state(model, ckpt_path, device=device)
 
     # ── 2. Build DataLoaders ──────────────────────────────────────────────
     train_loader = build_dataloader(cfg_dict, split="train")

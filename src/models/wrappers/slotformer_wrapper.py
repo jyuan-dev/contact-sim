@@ -69,14 +69,18 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
                 "resolution": res,
             }
         }
-        stage1_wrapper = build_model(stage1_cfg)
-
         if stage1_ckpt_path and os.path.exists(stage1_ckpt_path):
+            # Reconstruct the stage-1 experiment from ITS OWN saved config —
+            # num_slots / slot_dim / BN flags live there, not in this config.
+            from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
             from src.utils.training_utils import load_checkpoint_state
+
+            stage1_wrapper, _ = bootstrap_checkpoint(stage1_ckpt_path)
             load_checkpoint_state(stage1_wrapper, stage1_ckpt_path)
-            print(f"[SlotFormer] Loaded pretrained Stage 1 weights from: {stage1_ckpt_path}")
+            print(f"[SlotFormer] Loaded pretrained Stage 1 experiment from: {stage1_ckpt_path}")
         else:
             print(f"[SlotFormer Warning] Stage 1 checkpoint path '{stage1_ckpt_path}' not found!")
+            stage1_wrapper = build_model(stage1_cfg)
 
         history_len = model_cfg.get("history_len", 2)
         rollout_len = model_cfg.get("rollout_len", 4)

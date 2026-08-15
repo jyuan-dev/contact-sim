@@ -10,7 +10,6 @@ import os
 import sys
 import json
 import time
-import numpy as np
 import torch
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -21,8 +20,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from src.models.factory import build_model
-from src.datasets import build_dataloader, DeterministicEpisodeEvalDataset
-from src.metrics import EvaluationSuite, DeterministicEvaluator
+from src.datasets import DeterministicEpisodeEvalDataset
+from src.metrics import DeterministicEvaluator
 from src.utils.training_utils import load_checkpoint_state
 from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
 from src.utils.data_utils import find_dataset_path
@@ -46,7 +45,9 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
 
     model.eval()
     slot_names = {0: "Agent / Robot", 1: "T-Block Object", 2: "Goal Target Area"}
-    evaluator = DeterministicEvaluator(num_classes=3, slot_names=slot_names, thresh=0.5)
+    # Built lazily on the first batch so the slot count matches the model
+    # instead of hardcoding 3-slot PushT semantics.
+    evaluator = None
 
     num_batches = len(val_loader)
     start_t = time.time()
@@ -57,6 +58,10 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
             out = model(video)
 
             gt_masks = batch.get('gt_masks', None)
+            if evaluator is None and gt_masks is not None:
+                num_classes = gt_masks.shape[2]
+                names = {k: slot_names.get(k, f"Slot {k}") for k in range(num_classes)}
+                evaluator = DeterministicEvaluator(num_classes=num_classes, slot_names=names, thresh=0.5)
             evaluator.update(
                 pred_masks=out.get('pred_masks'),
                 gt_masks=gt_masks.to(device) if gt_masks is not None else None,
@@ -70,6 +75,9 @@ def run_deterministic_eval(model, ckpt_path, base_seed=42, clips_per_ep=2, batch
                 elapsed = time.time() - start_t
                 speed = (b_idx + 1) / elapsed
                 print(f"Evaluated [{b_idx+1}/{num_batches}] batches ({speed:.1f} batch/s) | Curr mIoU: {evaluator.running_miou_mean()*100:.2f}%")
+
+    if evaluator is None:
+        raise RuntimeError("No batches carried gt_masks — evaluation produced no results")
 
     raw = evaluator.finalize()
 
@@ -206,36 +214,11 @@ def main(cfg: DictConfig):
         batch_size = int(cfg.get('batch_size', 64))
         run_deterministic_eval(model, ckpt_path, base_seed=base_seed, clips_per_ep=clips_per_ep, batch_size=batch_size, device=device)
     else:
-        val_loader = build_dataloader(cfg_dict, split='val', batch_size=1, num_workers=2, shuffle=False)
-        evaluator = EvaluationSuite(num_classes=3)
-        num_eval_batches = cfg.get('eval_batches', 20)
-        all_metrics = []
-
-        model.eval()
-        for step_idx, batch in enumerate(val_loader):
-            if step_idx >= num_eval_batches:
-                break
-            imgs_torch = batch['img'].to(device)
-            gt_masks = batch.get('gt_masks', None)
-            if gt_masks is not None:
-                gt_masks = gt_masks.to(device)
-
-            with torch.no_grad():
-                out = model(imgs_torch)
-
-            pred_masks = out.get('pred_masks', None)
-            if pred_masks is not None:
-                pred_masks_np = pred_masks[0].cpu().numpy()
-            else:
-                pred_masks_np = np.zeros((imgs_torch.shape[1], 4, 64, 64), dtype=np.float32)
-
-            gt_masks_np = gt_masks[0].cpu().numpy() if gt_masks is not None else np.zeros((imgs_torch.shape[1], 3, 64, 64))
-            gt_masks_dict = {m_idx: (gt_masks_np[:, m_idx] > 0.5) for m_idx in range(gt_masks_np.shape[1])}
-
-            seq_metrics = evaluator.evaluate_sequence_masks(pred_masks_np, gt_masks_dict)
-            all_metrics.append(seq_metrics)
-
-        print("\nVisualization evaluation completed!")
+        # The former visualize branch evaluated zero-filled masks and rendered
+        # nothing — fail loudly instead of reporting fake numbers.
+        raise NotImplementedError(
+            f"Unknown eval mode: '{eval_mode}'. Supported modes: "
+            "'deterministic' (full val coverage).")
 
 
 if __name__ == "__main__":
