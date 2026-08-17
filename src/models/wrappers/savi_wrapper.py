@@ -120,6 +120,14 @@ class StandardizedSAViWrapper(BaseModelWrapper):
             "post_slots": raw_out["post_slots"],
         }
 
+    def encode_slots(self, video: Tensor) -> Tensor:
+        """Extract per-frame slots [B, T, K, D] for video [B, T, C, H, W]."""
+        return self.model.encode_slots(video)
+
+    def decode_slots(self, slots: Tensor) -> tuple[Tensor, Tensor]:
+        """Decode slots to (recon_img, pred_masks)."""
+        return self.model.decode_slots(slots)
+
     def inner_savi(self) -> Any:
         """Return the core StoSAVi model (typed accessor)."""
         return self.model.model

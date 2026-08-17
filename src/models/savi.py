@@ -549,6 +549,36 @@ class StoSAVi(nn.Module):
         recon_combined = torch.sum(recons * masks, dim=1)  # [B, 3, H, W]
         return recon_combined, recons, masks, slots
 
+    def encode_slots(self, video: torch.Tensor) -> torch.Tensor:
+        """Extract per-frame slots [B, T, K, D] for video [B, T, C, H, W]."""
+        if hasattr(self, "_reset_rnn"):
+            self._reset_rnn()
+        post_slots, _ = self.encode(video)
+        return post_slots
+
+    def decode_slots(self, slots: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Decode slots [B, T, K, D] or [B, K, D] to (recon_img, pred_masks).
+        """
+        is_5d = (slots.ndim == 4)
+        if is_5d:
+            B, T, K, D = slots.shape
+            slots_flat = slots.flatten(0, 1)
+        else:
+            B, K, D = slots.shape
+            slots_flat = slots
+
+        recon_combined, _, masks, _ = self.decode(slots_flat)
+
+        if is_5d:
+            recon_img = recon_combined.unflatten(0, (B, T))
+            pred_masks = masks.squeeze(2).unflatten(0, (B, T))
+        else:
+            recon_img = recon_combined
+            pred_masks = masks.squeeze(2)
+
+        return recon_img, pred_masks
+
     @property
     def dtype(self) -> torch.dtype:
         return self.init_latents.dtype
@@ -644,6 +674,14 @@ class SAVi(nn.Module):
         if any(k.startswith('model.') for k in state_dict.keys()):
             return super().load_state_dict(state_dict, strict=strict)
         return self.model.load_state_dict(state_dict, strict=strict)
+
+    def encode_slots(self, video: torch.Tensor) -> torch.Tensor:
+        """Extract per-frame slots [B, T, K, D] for video [B, T, C, H, W]."""
+        return self.model.encode_slots(video)
+
+    def decode_slots(self, slots: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Decode slots to (recon_img, pred_masks)."""
+        return self.model.decode_slots(slots)
 
     def forward(self, x: Union[torch.Tensor, dict], **kwargs: Any) -> dict:
         """Forward pass. Accepts tensor [B, T, C, H, W] or dict {'img': ...}."""

@@ -88,12 +88,10 @@ def predict_slot_rollout(
             # action/goal-conditioned models are not silently evaluated
             # on their unconditioned branch.
             roll_kwargs: dict[str, Any] = {"pred_len": rollout_len}
-            if hasattr(rollouter.forward, "__code__"):
-                varnames = rollouter.forward.__code__.co_varnames
-                if actions is not None and "actions" in varnames:
-                    roll_kwargs["actions"] = actions
-                if goal_slots is not None and "goal_slots" in varnames:
-                    roll_kwargs["goal_slots"] = goal_slots
+            if actions is not None:
+                roll_kwargs["actions"] = actions
+            if goal_slots is not None:
+                roll_kwargs["goal_slots"] = goal_slots
             rollout_slots_tensor = rollouter(cond_slots_tensor, **roll_kwargs)
         else:
             # Fallback to Stage 1 SAVi GRU predictor

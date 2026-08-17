@@ -42,6 +42,27 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         self.model = model
         self.resolution = resolution
 
+    def encode_slots(self, video: Tensor) -> Tensor:
+        """Extract per-frame slots [B, T, K, D] for video [B, T, C, H, W]."""
+        return self.model.extract_slots(video)
+
+    def decode_slots(self, slots: Tensor) -> tuple[Tensor, Tensor]:
+        """Decode slots to (recon_img, pred_masks)."""
+        stage1 = getattr(self.model, "stage1_model", None)
+        if stage1 is not None and hasattr(stage1, "decode_slots"):
+            return stage1.decode_slots(slots)
+        inner_savi = self.inner_savi()
+        is_5d = (slots.ndim == 4)
+        if is_5d:
+            B, T = slots.shape[:2]
+            slots_flat = slots.flatten(0, 1)
+        else:
+            slots_flat = slots
+        recon_flat, _, masks_flat, _ = inner_savi.decode(slots_flat)
+        if is_5d:
+            return recon_flat.unflatten(0, (B, T)), masks_flat.squeeze(2).unflatten(0, (B, T))
+        return recon_flat, masks_flat.squeeze(2)
+
     def inner_savi(self) -> Any:
         """Return the Stage-1 StoSAVi core (typed accessor)."""
         stage1 = getattr(self.model, "stage1_model", None)

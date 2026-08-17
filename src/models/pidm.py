@@ -214,6 +214,8 @@ class GoalConditionedSlotRollouter(nn.Module):
         x: torch.Tensor,
         pred_len: int,
         goal_slots: torch.Tensor | None = None,
+        actions: torch.Tensor | None = None,
+        **kwargs: Any,
     ) -> torch.Tensor:
         """
         Args:
@@ -351,8 +353,10 @@ class PIDMModel(nn.Module):
         """
         Extract per-frame slots [B, T, K, D] using frozen Stage 1 model.
         """
-        inner_savi = self.stage1_model.inner_savi()
+        if hasattr(self.stage1_model, "encode_slots"):
+            return self.stage1_model.encode_slots(video)
 
+        inner_savi = self.stage1_model.inner_savi()
         if hasattr(inner_savi, "_reset_rnn"):
             inner_savi._reset_rnn()
 
@@ -469,12 +473,17 @@ class PIDMModel(nn.Module):
         # Visual reconstructions if requested
         if self.use_img_recon_loss or not self.training:
             full_slots = torch.cat([history_slots, pred_rollout_slots], dim=1)
-            inner_savi = self.stage1_model.inner_savi()
-            slots_flat = full_slots.flatten(0, 1)
-            recon_img_flat, _, masks_flat, _ = inner_savi.decode(slots_flat)
+            if hasattr(self.stage1_model, "decode_slots"):
+                recon_img, pred_masks = self.stage1_model.decode_slots(full_slots)
+            else:
+                inner_savi = self.stage1_model.inner_savi()
+                slots_flat = full_slots.flatten(0, 1)
+                recon_img_flat, _, masks_flat, _ = inner_savi.decode(slots_flat)
+                recon_img = recon_img_flat.unflatten(0, (B, full_slots.shape[1]))
+                pred_masks = masks_flat.squeeze(2).unflatten(0, (B, full_slots.shape[1]))
 
-            out_dict["recon_img"] = recon_img_flat.unflatten(0, (B, full_slots.shape[1]))
-            out_dict["pred_masks"] = masks_flat.squeeze(2).unflatten(0, (B, full_slots.shape[1]))
+            out_dict["recon_img"] = recon_img
+            out_dict["pred_masks"] = pred_masks
             out_dict["post_slots"] = full_slots
 
         return out_dict

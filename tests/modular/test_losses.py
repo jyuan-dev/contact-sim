@@ -256,5 +256,31 @@ class TestLosses(unittest.TestCase):
         self.assertIn('mask', loss_fn.losses)
 
 
+class TestSlotMSELoss(unittest.TestCase):
+    def test_slot_mse_computation(self):
+        from src.losses.slot_losses import SlotMSELoss
+        loss_fn = SlotMSELoss(decay_factor=0.9, weight=1.0)
+        gt_slots = torch.randn(2, 4, 3, 16)
+        pred_slots = torch.randn(2, 4, 3, 16)
+        out = {"gt_slots": gt_slots, "pred_slots": pred_slots}
+        res = loss_fn(out)
+        self.assertIn("loss", res)
+        self.assertIn("slot_mse", res)
+        self.assertTrue(torch.isfinite(res["loss"]))
+        self.assertGreater(res["loss"].item(), 0.0)
+
+    def test_action_nll_aggregation(self):
+        from src.losses.slot_losses import SlotMSELoss
+        loss_fn = SlotMSELoss(decay_factor=1.0, action_loss_weight=2.0)
+        gt_slots = torch.randn(2, 2, 2, 8)
+        pred_slots = torch.randn(2, 2, 2, 8)
+        act_dict = {"loss": torch.tensor(1.5), "action_mae": torch.tensor(0.2), "action_rmse": torch.tensor(0.3)}
+        out = {"gt_slots": gt_slots, "pred_slots": pred_slots, "action_nll_dict": act_dict}
+        res = loss_fn(out)
+        self.assertIn("action_nll", res)
+        self.assertIn("action_mae", res)
+        self.assertIn("action_rmse", res)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -79,7 +79,13 @@ class SlotRollouter(nn.Module):
         self.enc_slots_pe = build_pos_enc(slots_pe, num_slots, d_model)
         self.out_proj = nn.Linear(d_model, slot_size)
 
-    def forward(self, x: torch.Tensor, pred_len: int) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        pred_len: int,
+        actions: torch.Tensor | None = None,
+        **kwargs: Any,
+    ) -> torch.Tensor:
         """
         Args:
             x: [B, history_len, num_slots, slot_size]
@@ -293,6 +299,7 @@ class OCVPSlotRollouter(nn.Module):
         x: torch.Tensor,
         pred_len: int,
         actions: torch.Tensor | None = None,
+        **kwargs: Any,
     ) -> torch.Tensor:
         """
         Args:
@@ -459,11 +466,12 @@ class SlotFormerModel(nn.Module):
         Extract per-frame slots for full video [B, T, C, H, W] using Stage 1 model.
         Returns: [B, T, K, D]
         """
-        inner_savi = self.stage1_model.inner_savi()
+        if hasattr(self.stage1_model, "encode_slots"):
+            return self.stage1_model.encode_slots(video)
 
+        inner_savi = self.stage1_model.inner_savi()
         if hasattr(inner_savi, "_reset_rnn"):
             inner_savi._reset_rnn()
-
         post_slots, _ = inner_savi.encode(video)
         return post_slots  # [B, T, K, D]
 
@@ -486,10 +494,7 @@ class SlotFormerModel(nn.Module):
         history_slots = gt_all_slots[:, :self.history_len]
         gt_rollout_slots = gt_all_slots[:, self.history_len:self.history_len + self.rollout_len]
 
-        if hasattr(self.rollouter, "forward") and "actions" in self.rollouter.forward.__code__.co_varnames:
-            pred_rollout_slots = self.rollouter(history_slots, pred_len=self.rollout_len, actions=actions)
-        else:
-            pred_rollout_slots = self.rollouter(history_slots, pred_len=self.rollout_len)
+        pred_rollout_slots = self.rollouter(history_slots, pred_len=self.rollout_len, actions=actions)
 
         out_dict = {
             "gt_slots": gt_rollout_slots,
@@ -516,41 +521,33 @@ class SlotFormerModel(nn.Module):
 
         if self.use_img_recon_loss or not self.training:
             full_slots = torch.cat([history_slots, pred_rollout_slots], dim=1)
-            inner_savi = self.stage1_model.inner_savi()
-            slots_flat = full_slots.flatten(0, 1)
-            recon_img_flat, _, masks_flat, _ = inner_savi.decode(slots_flat)
+            if hasattr(self.stage1_model, "decode_slots"):
+                recon_img, pred_masks = self.stage1_model.decode_slots(full_slots)
+            else:
+                inner_savi = self.stage1_model.inner_savi()
+                slots_flat = full_slots.flatten(0, 1)
+                recon_img_flat, _, masks_flat, _ = inner_savi.decode(slots_flat)
+                recon_img = recon_img_flat.unflatten(0, (B, full_slots.shape[1]))
+                pred_masks = masks_flat.squeeze(2).unflatten(0, (B, full_slots.shape[1]))
 
-            out_dict["recon_img"] = recon_img_flat.unflatten(0, (B, full_slots.shape[1]))
-            out_dict["pred_masks"] = masks_flat.squeeze(2).unflatten(0, (B, full_slots.shape[1]))
+            out_dict["recon_img"] = recon_img
+            out_dict["pred_masks"] = pred_masks
             out_dict["post_slots"] = full_slots
 
         return out_dict
 
     def calc_train_loss(self, out_dict: dict, batch: dict) -> tuple[torch.Tensor, dict[str, float]]:
         """Calculate Stage 2 Loss (Slot MSE + optional Action NLL)."""
-        gt_slots = out_dict["gt_slots"]      # [B, rollout_len, K, D]
-        pred_slots = out_dict["pred_slots"]  # [B, rollout_len, K, D]
+        from src.losses.slot_losses import SlotMSELoss
 
-        slots_loss = F.mse_loss(pred_slots, gt_slots, reduction="none")
+        loss_module = SlotMSELoss(
+            decay_factor=self.loss_decay_factor,
+            action_loss_weight=self.action_loss_weight,
+        )
+        loss_dict = loss_module(out_dict, batch)
+        total_loss = loss_dict["loss"]
 
-        if self.loss_decay_factor < 1.0:
-            w = self.loss_decay_factor ** torch.arange(gt_slots.shape[1], device=gt_slots.device)
-            w = w / w.sum() * gt_slots.shape[1]
-            slots_loss = slots_loss * w[None, :, None, None]
-
-        slot_recon_loss = slots_loss.mean()
-        total_loss = slot_recon_loss
-
-        loss_metrics = {"loss": total_loss.item(), "slot_mse": slot_recon_loss.item()}
-
-        if "action_nll_dict" in out_dict:
-            act_dict = out_dict["action_nll_dict"]
-            act_loss = act_dict["loss"]
-            total_loss = total_loss + self.action_loss_weight * act_loss
-            loss_metrics["action_nll"] = act_loss.item()
-            loss_metrics["action_mae"] = act_dict["action_mae"].item()
-            loss_metrics["action_rmse"] = act_dict["action_rmse"].item()
-            loss_metrics["loss"] = total_loss.item()
+        loss_metrics = {k: v.item() if isinstance(v, torch.Tensor) else float(v) for k, v in loss_dict.items()}
 
         if self.use_img_recon_loss and "recon_img" in out_dict:
             video = out_dict["input_img"]
