@@ -364,7 +364,8 @@ def run_rollout_evaluation(
 
             # Slot Swapping Analysis over Rollout steps (t >= n_cond_frames)
             if pred_masks is not None and gt_masks is not None:
-                assign = greedy_slot_assignments(pred_masks, gt_masks)  # [B, T, K_gt]
+                assign_dict = greedy_slot_assignments(pred_masks, gt_masks)
+                assign = assign_dict["assignments"]  # [B, T, Kp]
 
                 for b in range(B):
                     total_rollout_seqs += 1

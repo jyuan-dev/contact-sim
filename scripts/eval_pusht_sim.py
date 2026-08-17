@@ -5,13 +5,13 @@ CLOSED-LOOP PUSHT SIMULATOR EVALUATION SCRIPT
 Evaluates object-centric visual learning models (SAVi slot perception + INTACT Intent-to-Action Actor + SlotFormer)
 in the interactive PushT Gym Simulator (`gym-pusht`).
 
-Supports two intent conditioning modes:
-1. `static`: Target solved T-shape goal slots (z_goal)
-2. `world_model`: Step-by-step SlotFormer world model sub-goal prediction (z_{t+1})
+Supports multiple control modes:
+1. `static`: Direct INTACT intent-to-action control towards canonical solved T-shape goal slots (z_goal).
+2. `world_model`: Model Predictive Control (CEM shooting) rollout in latent slot space towards z_goal.
 3. `both`: Side-by-side comparative benchmarking of both modes.
 
 Usage:
-    python scripts/eval_pusht_sim.py --num_episodes 50 --max_steps 300 --save_gif
+    python scripts/eval_pusht_sim.py --ckpt_path scratch/checkpoints/ocvp_intact_slotformer_pusht_sigreg001/ocvp_intact_slotformer_best.pt --num_episodes 10 --save_gif --device cuda
 """
 
 import os
@@ -44,14 +44,14 @@ def parse_args():
     parser.add_argument(
         "--ckpt_path",
         type=str,
-        default="scratch/checkpoints/ocvp_intact_slotformer_pusht/ocvp_intact_slotformer_best.pt",
+        default="scratch/checkpoints/ocvp_intact_slotformer_pusht_sigreg001/ocvp_intact_slotformer_best.pt",
         help="Path to trained Stage 2 INTACT SlotFormer model checkpoint",
     )
     parser.add_argument(
         "--num_episodes",
         type=int,
-        default=50,
-        help="Number of evaluation episodes per mode (default: 50)",
+        default=20,
+        help="Number of evaluation episodes per mode (default: 20)",
     )
     parser.add_argument(
         "--max_steps",
@@ -68,9 +68,9 @@ def parse_args():
     parser.add_argument(
         "--goal_mode",
         type=str,
-        choices=["static", "world_model", "pidm", "both"],
+        choices=["static", "world_model", "cem_mpc", "both"],
         default="both",
-        help="Intent goal mode: 'static' (z_goal), 'world_model' (z_{t+1}), 'pidm' (goal-conditioned rollout), or 'both'",
+        help="Intent goal mode: 'static' (z_goal), 'world_model'/'cem_mpc' (CEM latent rollout), or 'both'",
     )
     parser.add_argument(
         "--action_scale",
@@ -172,20 +172,88 @@ def preprocess_obs(obs: np.ndarray, device: torch.device) -> torch.Tensor:
     return img_tensor
 
 
-def get_static_goal_slots(model, device: torch.device) -> torch.Tensor:
+def get_canonical_goal_slots(model_wrapper, device: torch.device) -> tuple[torch.Tensor, np.ndarray]:
     """
-    Generate target goal slots (z_goal) using a dedicated temporary PushT gym environment.
+    Generate ground-truth canonical goal slots (z_goal) by setting the T-block directly
+    to the target goal pose (100% coverage) and encoding with Stage 1 SAVi.
     """
     goal_env = gym.make("gym_pusht/PushT-v0", obs_type="pixels", observation_width=64, observation_height=64)
-    target_obs, _ = goal_env.reset(seed=999)
-    for _ in range(5):
-        target_obs, _, _, _, _ = goal_env.step(np.array([256.0, 256.0], dtype=np.float32))
+    target_obs, _ = goal_env.reset(seed=42)
+    pusht_inner = goal_env.unwrapped
+
+    # Position the T-block precisely at the goal pose [256, 256, pi/4]
+    goal_pose = pusht_inner.goal_pose
+    pusht_inner.block.angle = float(goal_pose[2])
+    pusht_inner.block.position = (float(goal_pose[0]), float(goal_pose[1]))
+    pusht_inner.agent.position = (256.0, 100.0)
+    pusht_inner.space.step(1e-4)
+
+    goal_coverage = pusht_inner._get_coverage()
+    solved_obs = pusht_inner.get_obs()
     goal_env.close()
-    
-    goal_tensor = preprocess_obs(target_obs, device)
+
+    print(f"[PushT Eval] Canonical goal image rendered with coverage: {goal_coverage * 100:.1f}%")
+    goal_tensor = preprocess_obs(solved_obs, device)
+
+    inner_savi = (
+        model_wrapper.model.stage1_model.inner_savi()
+        if hasattr(model_wrapper.model, "stage1_model")
+        else model_wrapper.model.inner_savi()
+    )
     with torch.no_grad():
-        goal_slots = model.model.extract_slots(goal_tensor)  # [1, 1, K, D]
-    return goal_slots[:, 0]  # [1, K, D]
+        if hasattr(inner_savi, "_reset_rnn"):
+            inner_savi._reset_rnn()
+        goal_slots, _ = inner_savi.encode(goal_tensor)  # [1, 1, K, D]
+
+    return goal_slots[:, 0], solved_obs  # [1, K, D], np.ndarray
+
+
+def plan_action_cem(
+    model,
+    z_history: torch.Tensor,
+    z_goal: torch.Tensor,
+    horizon: int = 4,
+    num_samples: int = 64,
+    num_elites: int = 8,
+    num_iterations: int = 3,
+    action_dim: int = 2,
+    device: torch.device = torch.device("cuda"),
+) -> torch.Tensor:
+    """
+    Model Predictive Control using Cross-Entropy Method (CEM) trajectory optimization
+    over candidate actions in latent slot space.
+    """
+    mean = torch.zeros(horizon, action_dim, device=device)
+    std = torch.ones(horizon, action_dim, device=device) * 0.5
+
+    # Object slots are k >= 1 (excluding robot slot 0)
+    target_obj_slots = z_goal[:, 1:]  # [1, K-1, D]
+
+    for _ in range(num_iterations):
+        # Sample candidate action sequences [N, H, action_dim]
+        actions = torch.randn(num_samples, horizon, action_dim, device=device) * std.unsqueeze(0) + mean.unsqueeze(0)
+        actions = actions.clamp(-1.5, 1.5)
+
+        # Expand z_history to [N, history_len, K, D]
+        history_expanded = z_history.expand(num_samples, -1, -1, -1)
+
+        # Rollout candidate trajectories in batch
+        pred_slots = model.rollouter(history_expanded, pred_len=horizon, actions=actions)  # [N, H, K, D]
+
+        # Evaluate distance of predicted object slots at horizon H against target goal slots
+        pred_obj_final = pred_slots[:, -1, 1:]  # [N, K-1, D]
+        costs = F.mse_loss(pred_obj_final, target_obj_slots.expand(num_samples, -1, -1), reduction="none").mean(dim=(-2, -1))
+
+        # Select top elite trajectories
+        elite_indices = torch.topk(costs, k=num_elites, largest=False).indices
+        elite_actions = actions[elite_indices]  # [num_elites, H, action_dim]
+
+        # Update distribution parameters
+        mean = elite_actions.mean(dim=0)
+        std = elite_actions.std(dim=0).clamp(min=0.05)
+
+    # Return the first action of the best trajectory [1, action_dim]
+    return mean[0:1]
 
 
 def evaluate_closed_loop(
@@ -201,9 +269,16 @@ def evaluate_closed_loop(
     num_gif_episodes: int = 3,
 ):
     """
-    Run closed-loop evaluation in PushT Gym simulator.
+    Run closed-loop evaluation in PushT Gym simulator with persistent recurrent SAVi perception.
     """
     inner_model = model_wrapper.model
+    inner_savi = (
+        inner_model.stage1_model.inner_savi()
+        if hasattr(inner_model, "stage1_model")
+        else inner_model.inner_savi()
+    )
+    actor = getattr(inner_model, "idm_actor", getattr(inner_model, "intact_actor", None))
+
     results = {
         "mode": goal_mode,
         "episodes": [],
@@ -218,12 +293,8 @@ def evaluate_closed_loop(
     print(f"STARTING CLOSED-LOOP EVALUATION | Mode: {goal_mode.upper()} | Episodes: {num_episodes}")
     print("=" * 70)
 
-    static_z_goal = None
-    if goal_mode in ("static", "pidm"):
-        # Both modes plan toward the static goal area; 'pidm' needs the goal
-        # too — otherwise plan_action runs with goal_video_or_slots=None and
-        # silently degrades to an unconditioned rollout.
-        static_z_goal = get_static_goal_slots(model_wrapper, device)
+    # Extract canonical 100% solved goal slots
+    static_z_goal, goal_img = get_canonical_goal_slots(model_wrapper, device)
 
     for ep in range(num_episodes):
         ep_seed = base_seed + ep
@@ -232,12 +303,15 @@ def evaluate_closed_loop(
         pusht_env = env.unwrapped
         agent_pos = np.array([pusht_env.agent.position.x, pusht_env.agent.position.y], dtype=np.float32)
 
-        
         ep_return = 0.0
         final_coverage = info.get("coverage", 0.0)
         solved_step = None
         ep_frames = []
 
+        # Reset SAVi recurrent hidden state at start of episode
+        if hasattr(inner_savi, "_reset_rnn"):
+            inner_savi._reset_rnn()
+        prev_slots = None
         history_slot_list = []
         prev_action_tensor = None
 
@@ -249,58 +323,50 @@ def evaluate_closed_loop(
 
             obs_tensor = preprocess_obs(obs, device)
 
+            # Persistent sequential SAVi slot extraction
             with torch.no_grad():
-                current_slot = inner_model.extract_slots(obs_tensor)[:, 0]  # [1, K, D]
-            history_slot_list.append(current_slot)
+                post_slots, _ = inner_savi.encode(obs_tensor, prev_slots=prev_slots)
+                current_slot = post_slots[:, 0]  # [1, K, D]
+                prev_slots = current_slot
 
+            history_slot_list.append(current_slot)
             if len(history_slot_list) > history_len:
                 history_slot_list.pop(0)
 
-            actor = getattr(inner_model, "idm_actor", getattr(inner_model, "intact_actor", None))
-            if actor is None:
-                raise RuntimeError(
-                    "Checkpoint has no idm_actor/intact_actor — action-conditioned "
-                    "goal modes require a PIDM/INTACT model.")
-
             if goal_mode == "static":
-                z_target = static_z_goal
                 with torch.no_grad():
                     act_mu, _ = actor(
                         z_curr=current_slot,
-                        z_next=z_target,
+                        z_next=static_z_goal,
                         prev_action=prev_action_tensor,
                     )
                     predicted_delta = act_mu[0].cpu().numpy()
-            elif goal_mode in ("world_model", "pidm"):
+                    prev_action_tensor = act_mu
+
+            elif goal_mode in ("world_model", "cem_mpc"):
                 if len(history_slot_list) < history_len:
                     z_history = current_slot.unsqueeze(1).repeat(1, history_len, 1, 1)
                 else:
                     z_history = torch.stack(history_slot_list, dim=1)  # [1, history_len, K, D]
 
                 with torch.no_grad():
-                    if hasattr(inner_model, "plan_action"):
-                        act_mu = inner_model.plan_action(
-                            history_video_or_slots=z_history,
-                            goal_video_or_slots=static_z_goal,
-                            prev_action=prev_action_tensor,
-                        )
-                    else:
-                        pred_next_slots = inner_model.rollouter(z_history, pred_len=1)  # [1, 1, K, D]
-                        z_target = pred_next_slots[:, 0]  # [1, K, D]
-                        act_mu, _ = actor(
-                            z_curr=current_slot,
-                            z_next=z_target,
-                            prev_action=prev_action_tensor,
-                        )
+                    act_mu = plan_action_cem(
+                        model=inner_model,
+                        z_history=z_history,
+                        z_goal=static_z_goal,
+                        horizon=4,
+                        num_samples=64,
+                        device=device,
+                    )
                     predicted_delta = act_mu[0].cpu().numpy()
+                    prev_action_tensor = act_mu
 
-            prev_action_tensor = act_mu
-
+            # Translate continuous displacement to continuous simulator target position
             target_x = agent_pos[0] + predicted_delta[0] * action_scale
             target_y = agent_pos[1] + predicted_delta[1] * action_scale
             target_pos = np.array([
-                np.clip(target_x, 0.0, 512.0),
-                np.clip(target_y, 0.0, 512.0)
+                np.clip(target_x, 15.0, 497.0),
+                np.clip(target_y, 15.0, 497.0),
             ], dtype=np.float32)
 
             obs, reward, terminated, truncated, info = env.step(target_pos)
@@ -391,7 +457,7 @@ def main():
 
     model_wrapper = load_model(args.ckpt_path, device)
 
-    modes_to_run = ["static", "world_model"] if args.goal_mode == "both" else [args.goal_mode]
+    modes_to_run = ["static", "cem_mpc"] if args.goal_mode == "both" else [args.goal_mode]
     all_mode_results = {}
 
     for mode in modes_to_run:
