@@ -118,9 +118,9 @@ class RunConfig:
         dataset_names = {f.name for f in fields(DatasetSection)} - {"extra"}
 
         unknown = [k for k in cfg if k not in train_names
-                   and k not in ("model", "dataset", "loss")]
+                   and k not in ("model", "dataset", "loss", "experiment")]
         if unknown and not permissive:
-            _reject_if_typo(unknown[0], list(train_names) + ["model", "dataset", "loss"],
+            _reject_if_typo(unknown[0], list(train_names) + ["model", "dataset", "loss", "experiment"],
                             "top-level")
         extra = {k: cfg[k] for k in unknown}
 
