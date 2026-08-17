@@ -8,7 +8,6 @@ import unittest
 import torch
 
 from src.models.savi import SAVi
-from src.models.rollout import predict_slot_rollout
 from src.models.intact import INTACT
 from src.models.factory import build_model
 from src.metrics import DeterministicEvaluator, greedy_slot_assignments
@@ -62,7 +61,7 @@ class TestRolloutInputValidation(unittest.TestCase):
         wrapper = build_model({"model": {"name": "savi", "type": "savi",
                                          "num_slots": 2, "slot_dim": 32, "resolution": [64, 64]}}).eval()
         with self.assertRaises((ValueError, TypeError)):
-            predict_slot_rollout(wrapper, torch.randn(2, 4, 64, 64))
+            wrapper.rollout(torch.randn(2, 4, 64, 64))
 
     def test_n_cond_frames_bounds(self):
         wrapper = build_model({"model": {"name": "savi", "type": "savi",
@@ -70,9 +69,9 @@ class TestRolloutInputValidation(unittest.TestCase):
         video = torch.randn(2, 4, 3, 64, 64)
         for bad in (0, 5, True):
             with self.assertRaises(ValueError):
-                predict_slot_rollout(wrapper, video, n_cond_frames=bad)
+                wrapper.rollout(video, n_cond_frames=bad)
         with self.assertRaises((ValueError, TypeError)):
-            predict_slot_rollout(wrapper, video, n_cond_frames=2.5)
+            wrapper.rollout(video, n_cond_frames=2.5)
 
 
 class TestMetricsInputValidation(unittest.TestCase):

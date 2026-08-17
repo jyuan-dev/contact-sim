@@ -214,3 +214,75 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
     ) -> tuple[Tensor, dict[str, float]]:
         return self.model.calc_train_loss(out, batch)
 
+    @typechecked
+    def rollout(
+        self,
+        video: Float[Tensor, "B T C H W"],
+        n_cond_frames: int = 2,
+        actions: Float[Tensor, "B Tact ActDim"] | None = None,
+        goal_slots: Float[Tensor, "B K D"] | None = None,
+        **kwargs: Any,
+    ) -> ModelOutput:
+        """
+        Perform autoregressive future slot rollout using Stage 2 Transformer rollouter
+        (or falling back to Stage 1 SAVi predictor if unconfigured).
+        """
+        if isinstance(n_cond_frames, bool) or not 1 <= n_cond_frames <= video.shape[1]:
+            raise ValueError(f"n_cond_frames must be in [1, T={video.shape[1]}], got {n_cond_frames!r}")
+
+        B, T, C, H, W = video.shape
+        device = video.device
+
+        # Resample if needed
+        if (H, W) != self.resolution:
+            video_resized = F.interpolate(
+                video.view(B * T, C, H, W),
+                size=self.resolution,
+                mode="bilinear",
+                align_corners=False,
+            ).view(B, T, C, self.resolution[0], self.resolution[1])
+        else:
+            video_resized = video
+
+        # 1. Conditioned encoding
+        cond_slots = self.encode_slots(video_resized[:, :n_cond_frames])  # [B, n_cond_frames, K, D]
+        rollout_len = T - n_cond_frames
+
+        # 2. Rollout
+        if rollout_len > 0:
+            rollouter = getattr(self.model, "rollouter", None)
+            if rollouter is not None:
+                roll_kwargs: dict[str, Any] = {"pred_len": rollout_len}
+                if actions is not None:
+                    roll_kwargs["actions"] = actions
+                if goal_slots is not None:
+                    roll_kwargs["goal_slots"] = goal_slots
+                rollout_slots_tensor = rollouter(cond_slots, **roll_kwargs)
+            else:
+                inner = self.inner_savi()
+                prev_slots = cond_slots[:, -1]
+                rollout_slots = []
+                for _ in range(n_cond_frames, T):
+                    rollout_latents = inner.predictor(prev_slots)
+                    rollout_slots.append(rollout_latents)
+                    prev_slots = rollout_latents
+                rollout_slots_tensor = torch.stack(rollout_slots, dim=1)
+
+            slots_stacked = torch.cat([cond_slots, rollout_slots_tensor], dim=1)
+        else:
+            slots_stacked = cond_slots
+
+        # 3. Decode
+        recon_img, pred_masks = self.decode_slots(slots_stacked)
+        is_rollout_mask = torch.tensor(
+            [t >= n_cond_frames for t in range(T)], device=device, dtype=torch.bool
+        )
+
+        return {
+            "input_img": video,
+            "pred_masks": pred_masks,
+            "recon_img": recon_img,
+            "post_slots": slots_stacked,
+            "is_rollout_mask": is_rollout_mask,
+        }
+

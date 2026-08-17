@@ -1,7 +1,6 @@
 """
-Tests for predict_slot_rollout — the shared autoregressive rollout path
-used by scripts/rollout.py, eval_full_sequence_rollout.py,
-rollout_full_episodes.py, and eval_multi_swap_rollout.py.
+Tests for BaseModelWrapper.rollout — the standardized autoregressive rollout method
+implemented across StandardizedSAViWrapper, StandardizedSlotFormerWrapper, and StandardizedLeWMWrapper.
 """
 
 import unittest
@@ -9,8 +8,10 @@ import unittest
 import torch
 import torch.nn as nn
 
-from src.models.rollout import predict_slot_rollout
 from src.models.factory import build_model
+from src.models.wrappers.savi_wrapper import StandardizedSAViWrapper
+from src.models.wrappers.slotformer_wrapper import StandardizedSlotFormerWrapper
+from src.models.wrappers.lewm_wrapper import StandardizedLeWMWrapper
 
 
 def _make_savi_wrapper():
@@ -40,16 +41,16 @@ class _FakeRollouter(nn.Module):
         self.D = D
         self.received_kwargs = None
 
-    def forward(self, cond_slots, pred_len=2, actions=None, goal_slots=None):
+    def forward(self, cond_slots, pred_len=2, actions=None, goal_slots=None, **kwargs):
         B = cond_slots.shape[0]
         self.received_kwargs = {"actions": actions, "goal_slots": goal_slots}
         return torch.zeros(B, pred_len, self.K, self.D, device=cond_slots.device)
 
 
-class TestPredictSlotRollout(unittest.TestCase):
-    def test_output_contract(self):
+class TestModelWrapperRollout(unittest.TestCase):
+    def test_savi_output_contract(self):
         wrapper = _make_savi_wrapper()
-        out = predict_slot_rollout(wrapper, _video(), n_cond_frames=2)
+        out = wrapper.rollout(_video(), n_cond_frames=2)
 
         for key in ("input_img", "pred_masks", "recon_img", "post_slots", "is_rollout_mask"):
             self.assertIn(key, out)
@@ -60,7 +61,7 @@ class TestPredictSlotRollout(unittest.TestCase):
 
     def test_is_rollout_mask(self):
         wrapper = _make_savi_wrapper()
-        out = predict_slot_rollout(wrapper, _video(), n_cond_frames=2)
+        out = wrapper.rollout(_video(), n_cond_frames=2)
         self.assertTrue(torch.equal(out["is_rollout_mask"],
                                     torch.tensor([False, False, True, True])))
 
@@ -68,7 +69,7 @@ class TestPredictSlotRollout(unittest.TestCase):
         """Cond frames must equal the canonical StoSAVi.encode output."""
         wrapper = _make_savi_wrapper()
         video = _video()
-        out = predict_slot_rollout(wrapper, video, n_cond_frames=2)
+        out = wrapper.rollout(video, n_cond_frames=2)
 
         inner = wrapper.inner_savi()
         inner._reset_rnn()
@@ -79,7 +80,7 @@ class TestPredictSlotRollout(unittest.TestCase):
         """n_cond_frames == T: no rollout frames, all slots come from encode."""
         wrapper = _make_savi_wrapper()
         video = _video()
-        out = predict_slot_rollout(wrapper, video, n_cond_frames=4)
+        out = wrapper.rollout(video, n_cond_frames=4)
 
         inner = wrapper.inner_savi()
         inner._reset_rnn()
@@ -87,54 +88,64 @@ class TestPredictSlotRollout(unittest.TestCase):
         self.assertTrue(torch.allclose(out["post_slots"], full_slots, atol=1e-6, rtol=1e-6))
         self.assertTrue(torch.equal(out["is_rollout_mask"], torch.tensor([False] * 4)))
 
-    def test_stage2_passes_conditioning_through(self):
-        """actions/goal_slots reach rollouters whose forward accepts them."""
-        wrapper = _make_savi_wrapper()
+    def test_slotformer_stage2_rollouter(self):
+        """SlotFormer wrapper rollout unrolls future slots via rollouter."""
+        stage1 = _make_savi_wrapper()
         fake_rollouter = _FakeRollouter(K=2, D=32)
 
-        class _FakeInner(nn.Module):
+        class _FakeSlotFormer(nn.Module):
             def __init__(self, stage1, rollouter):
                 super().__init__()
-                self.rollouter = rollouter
                 self.stage1_model = stage1
+                self.rollouter = rollouter
 
-        class _Stage2Wrapper(nn.Module):
-            def __init__(self, inner):
-                super().__init__()
-                self.model = inner
+            def extract_slots(self, video):
+                return self.stage1_model.encode_slots(video)
 
-        container = _Stage2Wrapper(_FakeInner(wrapper, fake_rollouter))
+        container = StandardizedSlotFormerWrapper(_FakeSlotFormer(stage1, fake_rollouter))
         actions = torch.randn(2, 4, 2)
         goal_slots = torch.randn(2, 2, 32)
 
-        predict_slot_rollout(container, _video(), n_cond_frames=2,
-                             actions=actions, goal_slots=goal_slots)
-
+        out = container.rollout(_video(), n_cond_frames=2, actions=actions, goal_slots=goal_slots)
         self.assertIs(fake_rollouter.received_kwargs["actions"], actions)
         self.assertIs(fake_rollouter.received_kwargs["goal_slots"], goal_slots)
-
-    def test_stage2_rollouter_branch(self):
-        """Wrapper-of-model with rollouter + stage1: rollout frames come from the rollouter."""
-        wrapper = _make_savi_wrapper()
-
-        class _FakeInner(nn.Module):
-            def __init__(self, stage1):
-                super().__init__()
-                self.rollouter = _FakeRollouter(K=2, D=32)
-                self.stage1_model = stage1
-
-        class _Stage2Wrapper(nn.Module):
-            def __init__(self, inner):
-                super().__init__()
-                self.model = inner
-
-        container = _Stage2Wrapper(_FakeInner(wrapper))
-        out = predict_slot_rollout(container, _video(), n_cond_frames=2)
 
         # Rollout frames (t >= 2) come from the fake rollouter -> zeros
         self.assertTrue(torch.all(out["post_slots"][:, 2:] == 0.0))
         # Cond frames come from the real encode path -> non-zero
         self.assertTrue(out["post_slots"][:, :2].abs().sum() > 0)
+
+    def test_lewm_rollout(self):
+        """LeWM wrapper rollout unrolls representations and returns is_rollout_mask."""
+        cfg = {
+            "model": {
+                "type": "lewm",
+                "resolution": [32, 32],
+                "in_channels": 3,
+                "action_dim": 2,
+                "embed_dim": 32,
+                "hidden_dim": 64,
+                "num_frames": 8,
+                "predictor": {
+                    "depth": 2,
+                    "heads": 2,
+                    "dim_head": 16,
+                    "mlp_dim": 64,
+                },
+            }
+        }
+        lewm_wrapper = build_model(cfg).eval()
+        self.assertIsInstance(lewm_wrapper, StandardizedLeWMWrapper)
+
+        video = torch.randn(2, 2, 3, 32, 32)
+        actions = torch.randn(2, 6, 2)
+        out = lewm_wrapper.rollout(video, actions=actions, n_cond_frames=2)
+
+        self.assertIn("post_slots", out)
+        self.assertIn("is_rollout_mask", out)
+        self.assertEqual(out["post_slots"].shape, (2, 6, 1, 32))
+        self.assertTrue(torch.equal(out["is_rollout_mask"],
+                                    torch.tensor([False, False, True, True, True, True])))
 
 
 if __name__ == "__main__":

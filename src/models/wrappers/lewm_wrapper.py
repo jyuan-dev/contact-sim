@@ -13,11 +13,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from jaxtyping import Float
 
 from src.models.base import BaseModelWrapper, ModelOutput
 from src.models.factory import register_model
 from src.models.lewm import LeWM
 from src.losses.lewm_loss import LeWMLoss
+from src.utils.tensor_checks import typechecked
 
 
 @register_model(["lewm", "leworldmodel", "le_wm"])
@@ -155,3 +157,42 @@ class StandardizedLeWMWrapper(BaseModelWrapper):
             loss_dict = {"total_loss": total_loss.item()}
 
         return total_loss, loss_dict
+
+    @typechecked
+    def rollout(
+        self,
+        video: Float[Tensor, "B T_cond C H W"],
+        n_cond_frames: int = 2,
+        actions: Float[Tensor, "B T_total ActDim"] | None = None,
+        goal_slots: Float[Tensor, "B K D"] | None = None,
+        **kwargs: Any,
+    ) -> ModelOutput:
+        """
+        Perform autoregressive latent rollout using LeWM predictor.
+        """
+        if actions is None:
+            raise ValueError("LeWM rollout requires an 'actions' sequence tensor.")
+
+        B, T_cond, C, H, W = video.shape
+        target_H, target_W = self.resolution
+        if (H, W) != (target_H, target_W):
+            video_resized = F.interpolate(
+                video.view(B * T_cond, C, H, W),
+                size=(target_H, target_W),
+                mode="bilinear",
+                align_corners=False,
+            ).view(B, T_cond, C, target_H, target_W)
+        else:
+            video_resized = video
+
+        out = self.model.rollout(video_resized, actions=actions, n_cond_frames=n_cond_frames)
+        total_T = actions.shape[1]
+
+        return {
+            "input_img": video,
+            "pred_masks": None,
+            "recon_img": None,
+            "post_slots": out["emb"].unsqueeze(2),  # [B, total_T, 1, D]
+            "is_rollout_mask": out["is_rollout_mask"],
+            "extra": out,
+        }

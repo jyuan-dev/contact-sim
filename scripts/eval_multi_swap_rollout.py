@@ -20,7 +20,6 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from src.models.factory import build_model
-from src.models.rollout import predict_slot_rollout
 from src.metrics import greedy_slot_assignments
 from src.datasets import DeterministicEpisodeEvalDataset
 from src.utils.vis_utils import render_slot_overlay_frame, save_frames_to_gif
@@ -83,7 +82,7 @@ def run_full_evaluation(
     with torch.no_grad():
         for b_idx, batch in enumerate(val_loader):
             video = batch["img"].to(device)  # [B, T, C, H, W]
-            out = predict_slot_rollout(model, video, n_cond_frames=n_cond_frames)
+            out = model.rollout(video, n_cond_frames=n_cond_frames)
 
             B, T = video.shape[:2]
             recon = out["recon_img"]

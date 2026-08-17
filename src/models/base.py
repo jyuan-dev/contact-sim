@@ -63,6 +63,12 @@ class ModelOutput(TypedDict, total=False):
     pred_logits_all: NotRequired[Optional[Float[Tensor, "L B Q NumClassesPlus1"]]]
     pred_boxes_all: NotRequired[Optional[Float[Tensor, "L B Q 4"]]]
 
+    # Rollout metadata
+    is_rollout_mask: NotRequired[Optional[Tensor]]      # [T] boolean tensor
+
+    # Extra model-specific tensors / diagnostics
+    extra: NotRequired[Optional[dict[str, Any]]]
+
 
 # ── Abstract base class ────────────────────────────────────────────────────────
 
@@ -144,3 +150,25 @@ class BaseModelWrapper(abc.ABC, nn.Module):
                 loss terms (e.g. ``{"recon_loss": 0.42, "mask_bce": 0.11}``)
         """
         ...
+
+    def rollout(
+        self,
+        video: Float[Tensor, "B T C H W"],
+        n_cond_frames: int = 2,
+        actions: Float[Tensor, "B Tact ActDim"] | None = None,
+        goal_slots: Float[Tensor, "B K D"] | None = None,
+        **kwargs: Any,
+    ) -> ModelOutput:
+        """
+        Autoregressively rollout future states given initial context frames.
+
+        Args:
+            video: Video tensor [B, T, C, H, W].
+            n_cond_frames: Number of initial context frames to condition on.
+            actions: Action sequence for action-conditioned models [B, T_act, ActDim].
+            goal_slots: Target goal slots for goal-conditioned models [B, K, D].
+
+        Returns:
+            A ModelOutput dict containing rollout predictions.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement rollout()")

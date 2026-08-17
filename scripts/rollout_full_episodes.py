@@ -21,7 +21,6 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from src.models.factory import build_model
-from src.models.rollout import predict_slot_rollout
 from src.utils.vis_utils import render_slot_overlay_frame, save_frames_to_gif
 from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
 from src.utils.data_utils import find_dataset_path
@@ -119,7 +118,7 @@ def rollout_single_full_episode(
     start_t = time.time()
 
     with torch.no_grad():
-        out = predict_slot_rollout(model, img_t, n_cond_frames=n_cond_frames)
+        out = model.rollout(img_t, n_cond_frames=n_cond_frames)
 
     eval_time = time.time() - start_t
     print(f"Completed full episode rollout in {eval_time:.2f}s ({ep_len / eval_time:.1f} frames/s)")
