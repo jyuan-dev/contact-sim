@@ -13,10 +13,13 @@ Decouples visual slot trajectory prediction from low-level action generation:
 from __future__ import annotations
 
 import math
+from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from jaxtyping import Float
 
+from src.utils.tensor_checks import typechecked
 from src.models.intact import INTACT, RobotSlotIntentActionActor
 from src.models.slotformer import (
     build_pos_enc,
@@ -70,11 +73,12 @@ class GoalConditionedRollouterLayer(nn.Module):
         else:
             self.modulation = None
 
+    @typechecked
     def forward(
         self,
-        x: torch.Tensor,
-        goal_emb: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        x: Float[torch.Tensor, "B T K D"],
+        goal_emb: Float[torch.Tensor, "..."] | None = None,
+    ) -> Float[torch.Tensor, "B T K D"]:
         """
         Args:
             x: Slot tokens [B, T, K, D]
@@ -209,14 +213,15 @@ class GoalConditionedSlotRollouter(nn.Module):
 
         return self.goal_encoder(g_in)                # [B, D_model]
 
+    @typechecked
     def forward(
         self,
-        x: torch.Tensor,
+        x: Float[torch.Tensor, "B H K D"],
         pred_len: int,
-        goal_slots: torch.Tensor | None = None,
-        actions: torch.Tensor | None = None,
+        goal_slots: Float[torch.Tensor, "..."] | None = None,
+        actions: Float[torch.Tensor, "B T_act ActDim"] | None = None,
         **kwargs: Any,
-    ) -> torch.Tensor:
+    ) -> Float[torch.Tensor, "B P K D"]:
         """
         Args:
             x: History slot sequence [B, history_len, num_slots, slot_size]
@@ -349,7 +354,8 @@ class PIDMModel(nn.Module):
         self.stage1_model.eval()
         return self
 
-    def extract_slots(self, video: torch.Tensor) -> torch.Tensor:
+    @typechecked
+    def extract_slots(self, video: Float[torch.Tensor, "B T C H W"]) -> Float[torch.Tensor, "B T K D"]:
         """
         Extract per-frame slots [B, T, K, D] using frozen Stage 1 model.
         """
@@ -363,7 +369,7 @@ class PIDMModel(nn.Module):
         post_slots, _ = inner_savi.encode(video)
         return post_slots  # [B, T, K, D]
 
-    def forward(self, batch: dict | torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(self, batch: dict | Float[torch.Tensor, "B T C H W"]) -> dict[str, Any]:
         """
         Forward pass for PIDM training and rollout inference.
         """

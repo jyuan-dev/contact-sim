@@ -549,14 +549,16 @@ class StoSAVi(nn.Module):
         recon_combined = torch.sum(recons * masks, dim=1)  # [B, 3, H, W]
         return recon_combined, recons, masks, slots
 
-    def encode_slots(self, video: torch.Tensor) -> torch.Tensor:
+    @typechecked
+    def encode_slots(self, video: Float[torch.Tensor, "B T C H W"]) -> Float[torch.Tensor, "B T K D"]:
         """Extract per-frame slots [B, T, K, D] for video [B, T, C, H, W]."""
         if hasattr(self, "_reset_rnn"):
             self._reset_rnn()
         post_slots, _ = self.encode(video)
         return post_slots
 
-    def decode_slots(self, slots: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    @typechecked
+    def decode_slots(self, slots: Float[torch.Tensor, "..."]) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Decode slots [B, T, K, D] or [B, K, D] to (recon_img, pred_masks).
         """
@@ -675,11 +677,13 @@ class SAVi(nn.Module):
             return super().load_state_dict(state_dict, strict=strict)
         return self.model.load_state_dict(state_dict, strict=strict)
 
-    def encode_slots(self, video: torch.Tensor) -> torch.Tensor:
+    @typechecked
+    def encode_slots(self, video: Float[torch.Tensor, "B T C H W"]) -> Float[torch.Tensor, "B T K D"]:
         """Extract per-frame slots [B, T, K, D] for video [B, T, C, H, W]."""
         return self.model.encode_slots(video)
 
-    def decode_slots(self, slots: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    @typechecked
+    def decode_slots(self, slots: Float[torch.Tensor, "..."]) -> tuple[torch.Tensor, torch.Tensor]:
         """Decode slots to (recon_img, pred_masks)."""
         return self.model.decode_slots(slots)
 

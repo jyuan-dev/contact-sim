@@ -8,12 +8,16 @@ References:
 from __future__ import annotations
 
 import math
+from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from jaxtyping import Float
+
+from src.utils.tensor_checks import typechecked
 
 
-def get_sin_pos_enc(seq_len: int, d_model: int) -> torch.Tensor:
+def get_sin_pos_enc(seq_len: int, d_model: int) -> Float[torch.Tensor, "1 seq_len d_model"]:
     """Sinusoid temporal positional encoding [1, seq_len, d_model]."""
     inv_freq = 1.0 / (10000.0 ** (torch.arange(0.0, d_model, 2.0) / d_model))
     pos_seq = torch.arange(seq_len - 1, -1, -1).to(dtype=inv_freq.dtype, device=inv_freq.device)
@@ -79,13 +83,14 @@ class SlotRollouter(nn.Module):
         self.enc_slots_pe = build_pos_enc(slots_pe, num_slots, d_model)
         self.out_proj = nn.Linear(d_model, slot_size)
 
+    @typechecked
     def forward(
         self,
-        x: torch.Tensor,
+        x: Float[torch.Tensor, "B H K D"],
         pred_len: int,
-        actions: torch.Tensor | None = None,
+        actions: Float[torch.Tensor, "B T_act ActDim"] | None = None,
         **kwargs: Any,
-    ) -> torch.Tensor:
+    ) -> Float[torch.Tensor, "B P K D"]:
         """
         Args:
             x: [B, history_len, num_slots, slot_size]
@@ -136,7 +141,8 @@ class TemporalSelfAttention(nn.Module):
         super().__init__()
         self.attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, dropout=dropout, batch_first=True)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    @typechecked
+    def forward(self, x: Float[torch.Tensor, "B T K D"]) -> Float[torch.Tensor, "B T K D"]:
         B, T, K, D = x.shape
         x_flat = x.permute(0, 2, 1, 3).reshape(B * K, T, D)
         attn_out, _ = self.attn(x_flat, x_flat, x_flat)
@@ -153,7 +159,8 @@ class InteractiveSelfAttention(nn.Module):
         super().__init__()
         self.attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, dropout=dropout, batch_first=True)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    @typechecked
+    def forward(self, x: Float[torch.Tensor, "B T K D"]) -> Float[torch.Tensor, "B T K D"]:
         B, T, K, D = x.shape
         x_flat = x.reshape(B * T, K, D)
         attn_out, _ = self.attn(x_flat, x_flat, x_flat)
@@ -176,7 +183,8 @@ class SlotTransitionMLP(nn.Module):
             nn.Dropout(dropout),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    @typechecked
+    def forward(self, x: Float[torch.Tensor, "B T K D"]) -> Float[torch.Tensor, "B T K D"]:
         return self.mlp(x)
 
 
@@ -216,7 +224,12 @@ class OCVPRollouterLayer(nn.Module):
             nn.init.zeros_(self.modulation[-1].weight)
             nn.init.zeros_(self.modulation[-1].bias)
 
-    def forward(self, x: torch.Tensor, action_emb: torch.Tensor | None = None) -> torch.Tensor:
+    @typechecked
+    def forward(
+        self,
+        x: Float[torch.Tensor, "B T K D"],
+        action_emb: Float[torch.Tensor, "B T K D_act"] | None = None,
+    ) -> Float[torch.Tensor, "B T K D"]:
         if self.condition_mode == "film" and action_emb is not None:
             shift_a, scale_a, gate_a, shift_m, scale_m, gate_m = self.modulation(action_emb).chunk(6, dim=-1)
             x = x + gate_a * self.temporal_attn(self.norm1(x) * (1 + scale_a) + shift_a)
@@ -294,13 +307,14 @@ class OCVPSlotRollouter(nn.Module):
         self.enc_slots_pe = build_pos_enc(slots_pe, num_slots, d_model)
         self.out_proj = nn.Linear(d_model, slot_size)
 
+    @typechecked
     def forward(
         self,
-        x: torch.Tensor,
+        x: Float[torch.Tensor, "B H K D"],
         pred_len: int,
-        actions: torch.Tensor | None = None,
+        actions: Float[torch.Tensor, "B T_act ActDim"] | None = None,
         **kwargs: Any,
-    ) -> torch.Tensor:
+    ) -> Float[torch.Tensor, "B P K D"]:
         """
         Args:
             x: [B, history_len, num_slots, slot_size]
@@ -461,7 +475,8 @@ class SlotFormerModel(nn.Module):
         self.stage1_model.eval()
         return self
 
-    def extract_slots(self, video: torch.Tensor) -> torch.Tensor:
+    @typechecked
+    def extract_slots(self, video: Float[torch.Tensor, "B T C H W"]) -> Float[torch.Tensor, "B T K D"]:
         """
         Extract per-frame slots for full video [B, T, C, H, W] using Stage 1 model.
         Returns: [B, T, K, D]
@@ -475,7 +490,7 @@ class SlotFormerModel(nn.Module):
         post_slots, _ = inner_savi.encode(video)
         return post_slots  # [B, T, K, D]
 
-    def forward(self, batch: dict | torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(self, batch: dict | Float[torch.Tensor, "B T C H W"]) -> dict[str, Any]:
         """
         Forward pass for Stage 2 training or evaluation.
         """

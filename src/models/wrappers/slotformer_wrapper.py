@@ -12,9 +12,11 @@ from typing import Any, cast
 import torch
 import torch.nn as nn
 from torch import Tensor
+from jaxtyping import Float
 
 from src.models.base import BaseModelWrapper, ModelOutput
 from src.models.factory import register_model, build_model
+from src.utils.tensor_checks import typechecked
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -42,11 +44,13 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         self.model = model
         self.resolution = resolution
 
-    def encode_slots(self, video: Tensor) -> Tensor:
+    @typechecked
+    def encode_slots(self, video: Float[Tensor, "B T C H W"]) -> Float[Tensor, "B T K D"]:
         """Extract per-frame slots [B, T, K, D] for video [B, T, C, H, W]."""
         return self.model.extract_slots(video)
 
-    def decode_slots(self, slots: Tensor) -> tuple[Tensor, Tensor]:
+    @typechecked
+    def decode_slots(self, slots: Float[Tensor, "..."]) -> tuple[Tensor, Tensor]:
         """Decode slots to (recon_img, pred_masks)."""
         stage1 = getattr(self.model, "stage1_model", None)
         if stage1 is not None and hasattr(stage1, "decode_slots"):

@@ -15,9 +15,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from jaxtyping import Float
 
 from src.models.base import BaseModelWrapper, ModelOutput
 from src.models.factory import register_model
+from src.utils.tensor_checks import typechecked
 
 
 @register_model(["savi", "stosavi"])
@@ -120,11 +122,13 @@ class StandardizedSAViWrapper(BaseModelWrapper):
             "post_slots": raw_out["post_slots"],
         }
 
-    def encode_slots(self, video: Tensor) -> Tensor:
+    @typechecked
+    def encode_slots(self, video: Float[Tensor, "B T C H W"]) -> Float[Tensor, "B T K D"]:
         """Extract per-frame slots [B, T, K, D] for video [B, T, C, H, W]."""
         return self.model.encode_slots(video)
 
-    def decode_slots(self, slots: Tensor) -> tuple[Tensor, Tensor]:
+    @typechecked
+    def decode_slots(self, slots: Float[Tensor, "..."]) -> tuple[Tensor, Tensor]:
         """Decode slots to (recon_img, pred_masks)."""
         return self.model.decode_slots(slots)
 
