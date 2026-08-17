@@ -32,6 +32,7 @@ try:
 except ImportError:
     from typing_extensions import TypedDict
 
+from jaxtyping import Float
 import torch.nn as nn
 from torch import Tensor
 
@@ -46,21 +47,21 @@ class ModelOutput(TypedDict, total=False):
     """
 
     # Always present
-    input_img: Required[Tensor]         # [B, (T,) C, H, W]
+    input_img: Required[Float[Tensor, "B ..."]]         # [B, (T,) C, H, W]
 
     # Detection outputs (DETR family)
-    pred_boxes: Optional[Tensor]        # [B, Q, 4]
-    pred_logits: Optional[Tensor]       # [B, Q, num_classes + 1]
+    pred_boxes: Optional[Float[Tensor, "B Q 4"]]        # [B, Q, 4]
+    pred_logits: Optional[Float[Tensor, "B Q NumClassesPlus1"]]  # [B, Q, num_classes + 1]
 
     # Segmentation / reconstruction outputs (SAVi family) — one shape per key;
     # the wrapper normalizes, consumers take these keys strictly.
-    pred_masks: Optional[Tensor]        # [B, T, K, H, W] (always 5-D, squeezed)
-    recon_img: Optional[Tensor]         # [B, T, C, H, W]
-    post_slots: Optional[Tensor]        # [B, T, K, D]
+    pred_masks: Optional[Float[Tensor, "B T K H W"]]    # [B, T, K, H, W] (always 5-D, squeezed)
+    recon_img: Optional[Float[Tensor, "B T C H W"]]     # [B, T, C, H, W]
+    post_slots: Optional[Float[Tensor, "B T K D"]]      # [B, T, K, D]
 
     # DETR-internal: full layer stack for auxiliary loss computation
-    pred_logits_all: NotRequired[Optional[Tensor]]
-    pred_boxes_all: NotRequired[Optional[Tensor]]
+    pred_logits_all: NotRequired[Optional[Float[Tensor, "L B Q NumClassesPlus1"]]]
+    pred_boxes_all: NotRequired[Optional[Float[Tensor, "L B Q 4"]]]
 
 
 # ── Abstract base class ────────────────────────────────────────────────────────
