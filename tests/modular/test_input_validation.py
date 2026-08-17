@@ -9,7 +9,7 @@ import torch
 
 from src.models.savi import SAVi
 from src.models.rollout import predict_slot_rollout
-from src.models.intact_actor import RobotSlotIntentActionActor
+from src.models.intact import INTACT
 from src.models.factory import build_model
 from src.metrics import DeterministicEvaluator, greedy_slot_assignments
 from src.losses.sigreg import SIGRegLoss, compute_sigreg_statistic
@@ -118,8 +118,8 @@ class TestSigRegInputValidation(unittest.TestCase):
 class TestIntactActorInputValidation(unittest.TestCase):
     def setUp(self):
         torch.manual_seed(0)
-        self.actor = RobotSlotIntentActionActor(slot_dim=16, action_dim=2,
-                                                action_emb_dim=8, hidden_dim=32).eval()
+        self.actor = INTACT(slot_dim=16, action_dim=2,
+                            action_emb_dim=8, hidden_dim=32).eval()
 
     def test_wrong_ndim_raises(self):
         with self.assertRaises((ValueError, TypeError)):

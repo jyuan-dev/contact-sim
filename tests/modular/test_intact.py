@@ -1,22 +1,26 @@
 """
-Tests for RobotSlotIntentActionActor (INTACT intent-to-action operator).
+Tests for INTACT (intent-to-action operator).
 """
 
 import unittest
 
 import torch
 
-from src.models.intact_actor import RobotSlotIntentActionActor
+from src.models.intact import INTACT, Intact, RobotSlotIntentActionActor
 
 
-class TestRobotSlotIntentActionActor(unittest.TestCase):
+class TestINTACT(unittest.TestCase):
     def _make(self, **overrides):
         torch.manual_seed(0)
         params = dict(slot_dim=16, action_dim=2, action_emb_dim=8,
                       robot_slot_idx=0, hidden_dim=32, num_heads=4, depth=2,
                       min_log_std=-5.0, max_log_std=2.0)
         params.update(overrides)
-        return RobotSlotIntentActionActor(**params).eval()
+        return INTACT(**params).eval()
+
+    def test_aliases(self):
+        self.assertIs(Intact, INTACT)
+        self.assertIs(RobotSlotIntentActionActor, INTACT)
 
     def test_forward_shapes_and_clamp(self):
         actor = self._make(max_log_std=0.5, min_log_std=-2.0)

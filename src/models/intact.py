@@ -20,9 +20,9 @@ from jaxtyping import Float
 from src.utils.tensor_checks import check_tensor_shape, typechecked
 
 
-class RobotSlotIntentActionActor(nn.Module):
+class INTACT(nn.Module):
     """
-    Robot-Grounded Intent-to-Action Actor.
+    INTACT: Robot-Grounded Intent-to-Action Operator.
 
     Computes per-slot 4-slot feature grammar:
         g_k = [z_{t,k}, m_{t,k}, z_{t,k} * m_{t,k}]
@@ -183,3 +183,8 @@ class RobotSlotIntentActionActor(nn.Module):
             "action_mae": mae,
             "action_rmse": rmse,
         }
+
+
+# Aliases for backwards compatibility and ergonomics
+Intact = INTACT
+RobotSlotIntentActionActor = INTACT

@@ -433,8 +433,8 @@ class SlotFormerModel(nn.Module):
             )
 
         if use_intact_actor and raw_action_dim > 0:
-            from src.models.intact_actor import RobotSlotIntentActionActor
-            self.intact_actor = RobotSlotIntentActionActor(
+            from src.models.intact import INTACT
+            self.intact_actor = INTACT(
                 slot_dim=slot_dim,
                 action_dim=raw_action_dim,
                 action_emb_dim=action_embed_dim,

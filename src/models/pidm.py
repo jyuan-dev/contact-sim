@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.models.intact_actor import RobotSlotIntentActionActor
+from src.models.intact import INTACT, RobotSlotIntentActionActor
 from src.models.slotformer import (
     build_pos_enc,
     TemporalSelfAttention,
