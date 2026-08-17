@@ -14,6 +14,7 @@ from src.losses.mask_loss import MaskSegmentationLoss
 from src.losses.sigreg import SIGRegLoss
 from src.losses.contrastive import TemporalSlotContrastiveLoss
 from src.losses.composite import CompositeLoss
+from src.losses.lewm_loss import LeWMLoss
 
 
 def build_loss(cfg_loss):
@@ -40,5 +41,6 @@ __all__ = [
     "SIGRegLoss",
     "TemporalSlotContrastiveLoss",
     "CompositeLoss",
+    "LeWMLoss",
     "build_loss",
 ]

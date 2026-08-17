@@ -1,0 +1,32 @@
+# LeWorldModel (LeWM) PushT Experiment Configuration
+exp_name: "lewm_pusht_default_4ep"
+
+dataset:
+  load_masks: false
+  load_actions: true
+
+model:
+  name: "lewm"
+  type: "lewm"
+  resolution: [64, 64]
+  in_channels: 3
+  action_dim: 2
+  embed_dim: 192
+  hidden_dim: 2048
+  n_sample_frames: 6
+  num_frames: 16
+  num_preds: 1
+  predictor:
+    depth: 6
+    heads: 8
+    dim_head: 64
+    mlp_dim: 1024
+    dropout: 0.1
+  sigreg_weight: 0.09
+
+batch_size: 64
+lr: 0.0001
+weight_decay: 0.001
+epochs: 4
+val_every: 1
+seed: 42

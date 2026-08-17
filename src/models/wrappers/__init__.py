@@ -15,8 +15,12 @@ from src.models.wrappers.savi_wrapper import (
 from src.models.wrappers.slotformer_wrapper import (
     StandardizedSlotFormerWrapper,
 )
+from src.models.wrappers.lewm_wrapper import (
+    StandardizedLeWMWrapper,
+)
 
 __all__ = [
     "StandardizedSAViWrapper",
     "StandardizedSlotFormerWrapper",
+    "StandardizedLeWMWrapper",
 ]

@@ -19,9 +19,12 @@ Base model classes:
 from src.models.base import BaseModelWrapper, ModelOutput
 from src.models.factory import build_model, register_model, list_models
 from src.models.savi import SAVi
+from src.models.lewm import LeWM
 
 from src.models.wrappers import (
     StandardizedSAViWrapper,
+    StandardizedSlotFormerWrapper,
+    StandardizedLeWMWrapper,
 )
 
 __all__ = [
@@ -33,7 +36,10 @@ __all__ = [
     "ModelOutput",
     # Base model classes
     "SAVi",
+    "LeWM",
     # Wrapper classes
     "StandardizedSAViWrapper",
+    "StandardizedSlotFormerWrapper",
+    "StandardizedLeWMWrapper",
 ]
 
