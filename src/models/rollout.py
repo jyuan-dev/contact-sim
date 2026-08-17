@@ -57,9 +57,16 @@ def predict_slot_rollout(
     if hasattr(model, "rollouter") and hasattr(model, "stage1_model"):
         inner_savi = model.stage1_model.inner_savi()
         rollouter = model.rollouter
-    else:
+    elif hasattr(wrapper_model, "inner_savi"):
         inner_savi = wrapper_model.inner_savi()
         rollouter = None
+    elif hasattr(model, "model") and hasattr(model.model, "encode"):
+        inner_savi = model.model
+        rollouter = None
+    else:
+        raise ValueError(
+            f"Wrapper {type(wrapper_model).__name__} does not have an inner_savi accessor"
+        )
 
     device = video.device
     B, T, C, H, W = video.shape

@@ -144,13 +144,3 @@ class BaseModelWrapper(abc.ABC, nn.Module):
                 loss terms (e.g. ``{"recon_loss": 0.42, "mask_bce": 0.11}``)
         """
         ...
-
-    def inner_savi(self) -> Any:
-        """
-        Return the core StoSAVi model.
-
-        Wrappers that own a StoSAVi core override this with a typed accessor
-        (rollout / slotformer / pidm rely on it instead of reaching through
-        ``.model`` attributes).
-        """
-        raise NotImplementedError(f"{type(self).__name__} does not own a StoSAVi core")

@@ -41,7 +41,7 @@ class TestCanonicalCheckpointFormat(unittest.TestCase):
         wrapper = _make_wrapper()
         self.assertIsInstance(wrapper.inner_savi(), StoSAVi)
 
-    def test_base_wrapper_without_core_raises(self):
+    def test_base_wrapper_without_core(self):
         from src.models.base import BaseModelWrapper
 
         class NoCore(BaseModelWrapper):
@@ -50,8 +50,7 @@ class TestCanonicalCheckpointFormat(unittest.TestCase):
             def forward(self, x): return {}
             def compute_loss(self, out, batch): return torch.tensor(0.0), {}
 
-        with self.assertRaises(NotImplementedError):
-            NoCore().inner_savi()
+        self.assertFalse(hasattr(NoCore(), "inner_savi"))
 
 
 class TestLoadCheckpointStateFormats(unittest.TestCase):
