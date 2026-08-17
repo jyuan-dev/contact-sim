@@ -29,7 +29,7 @@ class TestSAViInputValidation(unittest.TestCase):
             self.model("not a tensor")
 
     def test_forward_rejects_wrong_ndim(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             self.model(torch.randn(2, 4, 64, 64))  # 4-D, missing channel
 
     def test_core_forward_requires_img_key(self):
@@ -37,23 +37,23 @@ class TestSAViInputValidation(unittest.TestCase):
             self.model.model({"video": torch.randn(2, 4, 3, 64, 64)})
 
     def test_encode_rejects_wrong_ndim(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             self.model.model.encode(torch.randn(2, 3, 64, 64))
 
     def test_encode_rejects_bad_prev_slots(self):
         video = torch.randn(2, 4, 3, 64, 64)
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             self.model.model.encode(video, prev_slots=torch.randn(2, 32))  # 2-D
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             self.model.model.encode(video, prev_slots=torch.randn(3, 2, 32))  # B mismatch
 
     def test_decode_rejects_wrong_ndim(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             self.model.model.decode(torch.randn(2, 2, 2, 32))  # 4-D
 
     def test_slot_attention_rejects_wrong_ndim(self):
         sa = self.model.model.slot_attention
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             sa(torch.randn(2, 64, 64), torch.randn(2, 2, 2, 32))
 
 
@@ -61,7 +61,7 @@ class TestRolloutInputValidation(unittest.TestCase):
     def test_video_wrong_ndim(self):
         wrapper = build_model({"model": {"name": "savi", "type": "savi",
                                          "num_slots": 2, "slot_dim": 32, "resolution": [64, 64]}}).eval()
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             predict_slot_rollout(wrapper, torch.randn(2, 4, 64, 64))
 
     def test_n_cond_frames_bounds(self):
@@ -71,20 +71,19 @@ class TestRolloutInputValidation(unittest.TestCase):
         for bad in (0, 5, True):
             with self.assertRaises(ValueError):
                 predict_slot_rollout(wrapper, video, n_cond_frames=bad)
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             predict_slot_rollout(wrapper, video, n_cond_frames=2.5)
 
 
 class TestMetricsInputValidation(unittest.TestCase):
     def test_greedy_assignments_shape_mismatch(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             greedy_slot_assignments(torch.rand(2, 4, 2, 64, 64), torch.rand(3, 4, 2, 64, 64))  # B mismatch
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             greedy_slot_assignments(torch.rand(2, 4, 2, 64, 64), torch.rand(2, 4, 2, 32, 32))  # H/W mismatch
 
     def test_greedy_assignments_non_tensor(self):
-        # typechecked is configured so all input violations raise ValueError
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             greedy_slot_assignments("masks", torch.rand(2, 4, 2, 64, 64))
 
     def test_evaluator_update_shape_mismatch(self):
@@ -101,7 +100,7 @@ class TestMetricsInputValidation(unittest.TestCase):
 
 class TestSigRegInputValidation(unittest.TestCase):
     def test_statistic_rejects_wrong_ndim(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             compute_sigreg_statistic(torch.randn(4, 6, 3), num_proj=8)  # 3-D
 
     def test_loss_rejects_wrong_ndim_tensor(self):
@@ -123,13 +122,19 @@ class TestIntactActorInputValidation(unittest.TestCase):
                                                 action_emb_dim=8, hidden_dim=32).eval()
 
     def test_wrong_ndim_raises(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             self.actor(torch.randn(3, 16), torch.randn(3, 16))  # 2-D slots
 
     def test_prev_action_batch_mismatch(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             self.actor.extract_features(torch.randn(3, 4, 16), torch.randn(3, 4, 16),
                                         prev_action=torch.randn(2, 2))  # B mismatch
+
+    def test_z_curr_z_next_dim_mismatch(self):
+        with self.assertRaises((ValueError, TypeError)):
+            self.actor.extract_features(torch.randn(3, 4, 16), torch.randn(2, 4, 16))  # B mismatch
+        with self.assertRaises((ValueError, TypeError)):
+            self.actor.extract_features(torch.randn(3, 4, 16), torch.randn(3, 5, 16))  # K mismatch
 
 
 class TestBootstrapInputValidation(unittest.TestCase):

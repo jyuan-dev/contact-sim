@@ -1,27 +1,27 @@
 """
 Input validation for public model seams.
 
-Two entry points, one contract (bad input raises ValueError naming the
-problem):
+Two entry points:
 
-- :data:`typechecked` — beartype+jaxtyping decorator enforcing shape
-  annotations (``Float[Tensor, "B T C H W"]``) at runtime, configured so
-  violations raise ``ValueError`` (the train loop's skip-batch recovery
-  catches it). Use for purely per-argument shape contracts.
+- :data:`typechecked` — jaxtyping + beartype decorator enforcing shape and type
+  annotations (e.g. ``Float[Tensor, "B T C H W"]``) at runtime, validating both
+  individual argument shapes and cross-argument dimension equality. Violations
+  raise :class:`jaxtyping.TypeCheckError` (subclass of ``TypeError``).
 - :func:`check_tensor_shape` — imperative call for checks an annotation
-  cannot express (cross-argument relations, conditional shapes, value
-  bounds, dict keys).
+  cannot express (conditional shapes, dynamic bounds, dict keys, or non-decorated callers).
 """
 
 from typing import Optional
 
 import torch
 from beartype import beartype, BeartypeConf
+from jaxtyping import jaxtyped
 
-typechecked = beartype(conf=BeartypeConf(
-    violation_param_type=ValueError,
-    violation_return_type=ValueError,
-))
+# jaxtyped wraps beartype to provide full runtime shape checking and named axis consistency
+typechecked = jaxtyped(typechecker=beartype(conf=BeartypeConf(
+    violation_param_type=TypeError,
+    violation_return_type=TypeError,
+)))
 
 
 def check_tensor_shape(x, name: str, ndim: Optional[int] = None,

@@ -17,8 +17,9 @@ from src.utils.tensor_checks import check_tensor_shape, typechecked
 
 
 @typechecked
-def compute_sigreg_statistic(z: Float[torch.Tensor, "B T K D"], num_proj,
-                             knots=17, t_max=3.0, seed=None) -> torch.Tensor:
+def compute_sigreg_statistic(z: Float[torch.Tensor, "B T K D"], num_proj: int,
+                             knots: int = 17, t_max: float = 3.0,
+                             seed: Optional[int] = None) -> Float[torch.Tensor, "K"]:
     """
     Per-slot Epps-Pulley ECF statistic — the single SIGReg core.
 
@@ -27,7 +28,6 @@ def compute_sigreg_statistic(z: Float[torch.Tensor, "B T K D"], num_proj,
     the random projections for reproducibility (metrics / tests); ``None``
     resamples them per call.
     """
-    check_tensor_shape(z, "z", ndim=4)
     B, T, K, D = z.shape
     proj = z.float().permute(2, 1, 0, 3)  # (K, T, B, D)
 

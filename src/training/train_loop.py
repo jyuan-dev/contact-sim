@@ -177,7 +177,7 @@ def run_epoch(
                 with torch.autocast(device.type, enabled=cfg.use_amp):
                     out = model(batch_device)
                     loss, loss_dict = model.compute_loss(out, batch_device)
-            except ValueError as err:
+            except (ValueError, TypeError) as err:
                 if is_train:
                     print("\n" + "!" * 80)
                     print(f"⚠️  [CRITICAL WARNING / NAN AT SOURCE] Step [{global_step + 1}]: {err}")

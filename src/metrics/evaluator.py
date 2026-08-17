@@ -147,17 +147,6 @@ def greedy_slot_assignments(
         'assignments': [B, T, Kp] long tensor of assigned GT slot indices
         'iou_matrices': [B, T, Kp, Kg] float tensor
     """
-    check_tensor_shape(pred_masks, "pred_masks", ndim=5)
-    check_tensor_shape(gt_masks, "gt_masks", ndim=5)
-    if pred_masks.shape[:2] != gt_masks.shape[:2]:
-        raise ValueError(
-            f"pred_masks and gt_masks must share (B, T), got "
-            f"{tuple(pred_masks.shape[:2])} vs {tuple(gt_masks.shape[:2])}")
-    if pred_masks.shape[-2:] != gt_masks.shape[-2:]:
-        raise ValueError(
-            f"pred_masks and gt_masks must share (H, W), got "
-            f"{tuple(pred_masks.shape[-2:])} vs {tuple(gt_masks.shape[-2:])}")
-
     B, T = pred_masks.shape[:2]
     p_bin = (pred_masks > thresh).float()
     g_bin = (gt_masks > thresh).float()

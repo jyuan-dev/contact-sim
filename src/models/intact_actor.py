@@ -97,8 +97,8 @@ class RobotSlotIntentActionActor(nn.Module):
         self,
         z_curr: Float[torch.Tensor, "B K D"],
         z_next: Float[torch.Tensor, "B K D"],
-        prev_action: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        prev_action: Float[torch.Tensor, "B ActDim"] | None = None,
+    ) -> Float[torch.Tensor, "B FeatDim"]:
         """
         Args:
             z_curr: Current slot tokens [B, K, D]
@@ -108,14 +108,6 @@ class RobotSlotIntentActionActor(nn.Module):
         Returns:
             Concatenated actor feature vector [B, hidden_dim + action_emb_dim]
         """
-        check_tensor_shape(z_curr, "z_curr", ndim=3)
-        check_tensor_shape(z_next, "z_next", ndim=3)
-        if z_curr.shape != z_next.shape:
-            raise ValueError(f"z_curr and z_next must have same shape, got {z_curr.shape} and {z_next.shape}")
-        if prev_action is not None:
-            check_tensor_shape(prev_action, "prev_action", ndim=2,
-                               shape=(z_curr.shape[0], None))
-
         intent = z_next - z_curr  # [B, K, D]
         grammar = torch.cat([z_curr, intent, z_curr * intent], dim=-1)  # [B, K, 3D]
 
@@ -141,12 +133,13 @@ class RobotSlotIntentActionActor(nn.Module):
 
         return robot_feat
 
+    @typechecked
     def forward(
         self,
-        z_curr: torch.Tensor,
-        z_next: torch.Tensor,
-        prev_action: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        z_curr: Float[torch.Tensor, "B K D"],
+        z_next: Float[torch.Tensor, "B K D"],
+        prev_action: Float[torch.Tensor, "B ActDim"] | None = None,
+    ) -> tuple[Float[torch.Tensor, "B ActDimOut"], Float[torch.Tensor, "B ActDimOut"]]:
         """
         Predict Gaussian action mean and log_std given z_curr and z_next (or z_goal).
         Returns: (mean, log_std) each [B, action_dim]

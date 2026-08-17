@@ -49,7 +49,7 @@ class TestRobotSlotIntentActionActor(unittest.TestCase):
 
     def test_shape_mismatch_raises(self):
         actor = self._make()
-        with self.assertRaises(ValueError):
+        with self.assertRaises((ValueError, TypeError)):
             actor.extract_features(torch.randn(3, 4, 16), torch.randn(3, 5, 16))
 
     def test_action_nll(self):

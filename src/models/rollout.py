@@ -21,8 +21,8 @@ def predict_slot_rollout(
     wrapper_model: nn.Module,
     video: Float[torch.Tensor, "B T C H W"],
     n_cond_frames: int = 2,
-    actions: torch.Tensor | None = None,
-    goal_slots: torch.Tensor | None = None,
+    actions: Float[torch.Tensor, "B Tact ActDim"] | None = None,
+    goal_slots: Float[torch.Tensor, "B K D"] | None = None,
 ) -> dict[str, torch.Tensor]:
     """
     Perform autoregressive future slot rollout.

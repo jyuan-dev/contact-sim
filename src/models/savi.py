@@ -149,7 +149,7 @@ class SlotAttention(nn.Module):
 
     @typechecked
     def forward(self, inputs: Float[torch.Tensor, "B N C"],
-                slots: Float[torch.Tensor, "B K D"]) -> torch.Tensor:
+                slots: Float[torch.Tensor, "B K D"]) -> Float[torch.Tensor, "B K D"]:
         """`inputs`: [B, N, C] flattened per-pixel features,
         `slots`: [B, num_slots, C] slot inits.
 
@@ -456,16 +456,16 @@ class StoSAVi(nn.Module):
 
     @typechecked
     def encode(self, img: Float[torch.Tensor, "B T C H W"],
-               prev_slots: Optional[torch.Tensor] = None) -> tuple:
+               prev_slots: Optional[Float[torch.Tensor, "B K D"]] = None) -> tuple[
+                   Float[torch.Tensor, "B T K D"],
+                   Float[torch.Tensor, "B T HW EncOutC"],
+               ]:
         """Encode a clip to post-slots.
 
         Returns (post_slots [B, T, num_slots, slot_size],
                  encoder_out [B, T, H*W, enc_out_channels]).
         """
         B, T, C, H, W = img.shape
-        if prev_slots is not None:
-            check_tensor_shape(prev_slots, "prev_slots", ndim=3,
-                               shape=(B, None, None))
         encoder_out = self._get_encoder_out(img.flatten(0, 1))
         encoder_out = encoder_out.unflatten(0, (B, T))
 
@@ -519,7 +519,12 @@ class StoSAVi(nn.Module):
         return out_dict
 
     @typechecked
-    def decode(self, slots: Float[torch.Tensor, "B K D"]) -> tuple:
+    def decode(self, slots: Float[torch.Tensor, "B K D"]) -> tuple[
+        Float[torch.Tensor, "B 3 H W"],
+        Float[torch.Tensor, "B K 3 H W"],
+        Float[torch.Tensor, "B K 1 H W"],
+        Float[torch.Tensor, "B K D"],
+    ]:
         """Decode slots to reconstructed images and masks.
 
         `slots`: [B, num_slots, slot_size].
