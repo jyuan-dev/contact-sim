@@ -14,12 +14,16 @@ rollout_len: 4
 # cOCVP & INTACT Action Conditioning Parameters
 raw_action_dim: 2
 action_embed_dim: 64
-condition_mode: "sum"
+condition_mode: "film"
 
 # INTACT RobotSlotIntentActionActor
 use_intact_actor: true
 action_loss_weight: 1.0
 robot_slot_idx: 0
+chunk_size: 1
+lambda_inv: 1.0
+lambda_goal: 0.5
+goal_horizon: 4
 
 d_model: 128
 num_layers: 4
@@ -29,4 +33,3 @@ t_pe: "sin"
 slots_pe: ""
 loss_decay_factor: 1.0
 use_img_recon_loss: false
-

@@ -3,7 +3,6 @@ Tests for INTACT (intent-to-action operator).
 """
 
 import unittest
-
 import torch
 
 from src.models.intact import INTACT, Intact, RobotSlotIntentActionActor
@@ -12,9 +11,18 @@ from src.models.intact import INTACT, Intact, RobotSlotIntentActionActor
 class TestINTACT(unittest.TestCase):
     def _make(self, **overrides):
         torch.manual_seed(0)
-        params = dict(slot_dim=16, action_dim=2, action_emb_dim=8,
-                      robot_slot_idx=0, hidden_dim=32, num_heads=4, depth=2,
-                      min_log_std=-5.0, max_log_std=2.0)
+        params = dict(
+            slot_dim=16,
+            action_dim=2,
+            action_emb_dim=8,
+            robot_slot_idx=0,
+            hidden_dim=32,
+            num_heads=4,
+            depth=2,
+            chunk_size=1,
+            min_log_std=-5.0,
+            max_log_std=2.0,
+        )
         params.update(overrides)
         return INTACT(**params).eval()
 
@@ -71,11 +79,75 @@ class TestINTACT(unittest.TestCase):
         out_none = actor.action_nll(z_curr, z_next, target, reduction="none")
         self.assertEqual(out_none["loss"].shape, torch.Size([3]))
 
+    def test_action_nll_dual(self):
+        actor = self._make()
+        z_curr = torch.randn(3, 4, 16)
+        z_local = torch.randn(3, 4, 16)
+        z_goal = torch.randn(3, 4, 16)
+        target = torch.randn(3, 2)
+
+        out = actor.action_nll_dual(
+            z_curr=z_curr,
+            z_local_next=z_local,
+            z_goal=z_goal,
+            target_action_local=target,
+            lambda_inv=1.0,
+            lambda_goal=0.5,
+        )
+        for key in ("loss", "loss_local", "loss_goal", "mean_local", "mean_goal", "action_mae", "action_rmse"):
+            self.assertIn(key, out)
+        self.assertAlmostEqual(
+            float(out["loss"].item()),
+            float((out["loss_local"] + 0.5 * out["loss_goal"]).item()),
+            places=5,
+        )
+
+    def test_dual_loss_gradient_isolation(self):
+        actor = self._make()
+        actor.train()
+        z_curr = torch.randn(3, 4, 16, requires_grad=True)
+        z_local = torch.randn(3, 4, 16, requires_grad=True)
+        z_goal = torch.randn(3, 4, 16, requires_grad=True)
+        target = torch.randn(3, 2)
+
+        out = actor.action_nll_dual(
+            z_curr=z_curr,
+            z_local_next=z_local,
+            z_goal=z_goal,
+            target_action_local=target,
+            lambda_inv=1.0,
+            lambda_goal=0.5,
+        )
+        out["loss"].backward()
+
+        # Attached physical branch receives gradients
+        self.assertIsNotNone(z_curr.grad)
+        self.assertIsNotNone(z_local.grad)
+        # Detached goal branch anchor MUST NOT receive gradients
+        self.assertIsNone(z_goal.grad)
+
+    def test_action_chunking(self):
+        actor = self._make(chunk_size=5)
+        z_curr = torch.randn(4, 4, 16)
+        z_next = torch.randn(4, 4, 16)
+        mean, log_std = actor(z_curr, z_next)
+
+        self.assertEqual(tuple(mean.shape), (4, 10))  # 5 * 2 = 10
+        self.assertEqual(tuple(log_std.shape), (4, 10))
+
+        target_chunk = torch.randn(4, 5, 2)
+        out = actor.action_nll(z_curr, z_next, target_chunk)
+        self.assertEqual(out["loss"].shape, torch.Size([]))
+
     def test_invalid_reduction_raises(self):
         actor = self._make()
         with self.assertRaises(ValueError):
-            actor.action_nll(torch.randn(3, 4, 16), torch.randn(3, 4, 16),
-                             torch.randn(3, 2), reduction="bogus")
+            actor.action_nll(
+                torch.randn(3, 4, 16),
+                torch.randn(3, 4, 16),
+                torch.randn(3, 2),
+                reduction="bogus",
+            )
 
 
 if __name__ == "__main__":

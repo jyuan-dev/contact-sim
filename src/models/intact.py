@@ -1,9 +1,9 @@
 """
 INTACT RobotSlotIntentActionActor: Robot-Grounded Intent-to-Action Operator.
 
-Maps current slot state z_t and motion/goal intent m_t = z_{t+1} - z_t
+Maps current slot state z_t and motion/goal intent m_t = z_{next} - z_t
 to robot action Gaussian parameters (mean, log_std) using per-slot 4-slot grammar
-([z_k, m_k, z_k * m_k]) and robot-anchored inter-slot cross-attention.
+([z_k, m_k, z_k * m_k, a_{t-1}]) and robot-anchored inter-slot cross-attention.
 
 Reference:
   INTACT: Isomorphic Intent-to-Action Learning (Sun et al., 2026)
@@ -12,6 +12,7 @@ Reference:
 from __future__ import annotations
 
 import math
+from typing import Optional, Tuple, Dict, Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -28,6 +29,10 @@ class INTACT(nn.Module):
         g_k = [z_{t,k}, m_{t,k}, z_{t,k} * m_{t,k}]
     and applies inter-slot multi-head attention where the robot slot (default idx 0)
     attends to object slots to infer contact-conditioned robot control actions.
+
+    Supports dual-intent learning:
+      - Attached Local Physical Transition: m_local = z_{t+1} - z_t
+      - Detached Deployment Goal Intent:    m_goal  = sg(z_g) - z_t
     """
 
     def __init__(
@@ -40,12 +45,15 @@ class INTACT(nn.Module):
         num_heads: int = 4,
         depth: int = 2,
         dropout: float = 0.0,
+        chunk_size: int = 1,
         min_log_std: float = -5.0,
         max_log_std: float = 2.0,
     ) -> None:
         super().__init__()
         self.slot_dim = slot_dim
-        self.action_dim = action_dim
+        self.raw_action_dim = action_dim
+        self.chunk_size = chunk_size
+        self.total_action_dim = action_dim * chunk_size
         self.action_emb_dim = action_emb_dim
         self.robot_slot_idx = robot_slot_idx
         self.hidden_dim = hidden_dim
@@ -54,10 +62,9 @@ class INTACT(nn.Module):
 
         # Grammar feature size per slot: [z, m, z * m] -> 3 * slot_dim
         self.grammar_dim = 3 * slot_dim
-
         self.grammar_proj = nn.Linear(self.grammar_dim, hidden_dim)
 
-        # Previous action embedder
+        # Previous action embedder (embeds raw action dimension)
         if action_emb_dim > 0:
             self.prev_action_encoder = nn.Sequential(
                 nn.Linear(action_dim, action_emb_dim),
@@ -73,7 +80,7 @@ class INTACT(nn.Module):
         )
         self.norm_slot = nn.LayerNorm(hidden_dim)
 
-        # MLP actor head
+        # MLP actor head outputs Gaussian parameters for the action chunk
         in_actor_dim = hidden_dim + (action_emb_dim if action_emb_dim > 0 else 0)
         actor_layers: list[nn.Module] = [
             nn.Linear(in_actor_dim, hidden_dim),
@@ -89,7 +96,7 @@ class INTACT(nn.Module):
                     nn.GELU(),
                 ]
             )
-        actor_layers.append(nn.Linear(hidden_dim, 2 * action_dim))
+        actor_layers.append(nn.Linear(hidden_dim, 2 * self.total_action_dim))
         self.actor_net = nn.Sequential(*actor_layers)
 
     @typechecked
@@ -103,7 +110,7 @@ class INTACT(nn.Module):
         Args:
             z_curr: Current slot tokens [B, K, D]
             z_next: Next/Goal slot tokens [B, K, D]
-            prev_action: Previous action [B, action_dim] or None
+            prev_action: Previous action [B, raw_action_dim] or None
 
         Returns:
             Concatenated actor feature vector [B, hidden_dim + action_emb_dim]
@@ -128,7 +135,14 @@ class INTACT(nn.Module):
                     z_curr.size(0), self.action_emb_dim, device=z_curr.device, dtype=z_curr.dtype
                 )
             else:
-                prev_act_emb = self.prev_action_encoder(prev_action)
+                # If prev_action is a chunk, slice to the most recent step
+                if prev_action.dim() > 2:
+                    prev_act_slice = prev_action[:, -1]
+                elif prev_action.shape[-1] > self.raw_action_dim:
+                    prev_act_slice = prev_action[:, :self.raw_action_dim]
+                else:
+                    prev_act_slice = prev_action
+                prev_act_emb = self.prev_action_encoder(prev_act_slice)
             return torch.cat([robot_feat, prev_act_emb], dim=-1)
 
         return robot_feat
@@ -142,7 +156,7 @@ class INTACT(nn.Module):
     ) -> tuple[Float[torch.Tensor, "B ActDimOut"], Float[torch.Tensor, "B ActDimOut"]]:
         """
         Predict Gaussian action mean and log_std given z_curr and z_next (or z_goal).
-        Returns: (mean, log_std) each [B, action_dim]
+        Returns: (mean, log_std) each [B, total_action_dim]
         """
         feat = self.extract_features(z_curr, z_next, prev_action)
         params = self.actor_net(feat)
@@ -161,9 +175,23 @@ class INTACT(nn.Module):
         Calculate Gaussian Negative Log-Likelihood (NLL) Loss against ground-truth actions.
         """
         mean, log_std = self(z_curr, z_next, prev_action)
-        # NLL formula: 0.5 * [ ((a - mu)^2 / exp(2*log_std)) + 2*log_std ]
+        
+        # Flatten target action if provided as [B, chunk, dim]
+        if target_action.dim() > 2:
+            target_flat = target_action.flatten(1, -1)
+        else:
+            target_flat = target_action
+
+        # Handle size alignment
+        if target_flat.shape[-1] != self.total_action_dim:
+            if target_flat.shape[-1] < self.total_action_dim:
+                # Pad or repeat if necessary
+                target_flat = target_flat.repeat(1, self.chunk_size)[:, :self.total_action_dim]
+            else:
+                target_flat = target_flat[:, :self.total_action_dim]
+
         var = torch.exp(2 * log_std)
-        nll = 0.5 * (((target_action - mean).square() / var) + 2 * log_std).mean(dim=-1)
+        nll = 0.5 * (((target_flat - mean).square() / var) + 2 * log_std).mean(dim=-1)
 
         if reduction == "mean":
             loss = nll.mean()
@@ -172,8 +200,8 @@ class INTACT(nn.Module):
         else:
             raise ValueError(f"Unsupported reduction: '{reduction}'")
 
-        mae = (mean - target_action).abs().mean()
-        rmse = (mean - target_action).square().mean().sqrt()
+        mae = (mean - target_flat).abs().mean()
+        rmse = (mean - target_flat).square().mean().sqrt()
 
         return {
             "loss": loss,
@@ -182,6 +210,54 @@ class INTACT(nn.Module):
             "log_std": log_std,
             "action_mae": mae,
             "action_rmse": rmse,
+        }
+
+    def action_nll_dual(
+        self,
+        z_curr: torch.Tensor,
+        z_local_next: torch.Tensor,
+        z_goal: torch.Tensor,
+        target_action_local: torch.Tensor,
+        target_action_goal: torch.Tensor | None = None,
+        prev_action: torch.Tensor | None = None,
+        lambda_inv: float = 1.0,
+        lambda_goal: float = 0.5,
+    ) -> dict[str, torch.Tensor]:
+        """
+        Isomorphic Dual-Intent Loss (Eq. 14 in Sun et al., 2026):
+          L_I2A = lambda_inv * NLL(a_t | z_t, z_{t+1}) + lambda_goal * NLL(a_t | z_t, sg(z_g))
+        """
+        # 1. Local physical transition (attached gradient)
+        res_local = self.action_nll(
+            z_curr=z_curr,
+            z_next=z_local_next,
+            target_action=target_action_local,
+            prev_action=prev_action,
+            reduction="mean",
+        )
+
+        # 2. Deployment goal intent (stop-gradient anchor)
+        target_goal_act = target_action_goal if target_action_goal is not None else target_action_local
+        res_goal = self.action_nll(
+            z_curr=z_curr,
+            z_next=z_goal.detach(),  # sg(z_g) stop-gradient deployment anchor
+            target_action=target_goal_act,
+            prev_action=prev_action,
+            reduction="mean",
+        )
+
+        total_loss = lambda_inv * res_local["loss"] + lambda_goal * res_goal["loss"]
+
+        return {
+            "loss": total_loss,
+            "loss_local": res_local["loss"],
+            "loss_goal": res_goal["loss"],
+            "mean_local": res_local["mean"],
+            "mean_goal": res_goal["mean"],
+            "log_std_local": res_local["log_std"],
+            "log_std_goal": res_goal["log_std"],
+            "action_mae": 0.5 * (res_local["action_mae"] + res_goal["action_mae"]),
+            "action_rmse": 0.5 * (res_local["action_rmse"] + res_goal["action_rmse"]),
         }
 
 

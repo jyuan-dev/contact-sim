@@ -407,6 +407,10 @@ class SlotFormerModel(nn.Module):
         use_intact_actor: bool = False,
         action_loss_weight: float = 1.0,
         robot_slot_idx: int = 0,
+        chunk_size: int = 1,
+        lambda_inv: float = 1.0,
+        lambda_goal: float = 0.5,
+        goal_horizon: int = 4,
     ) -> None:
         super().__init__()
         self.stage1_model = stage1_model
@@ -417,6 +421,9 @@ class SlotFormerModel(nn.Module):
         self.rollouter_type = rollouter_type.lower()
         self.use_intact_actor = use_intact_actor
         self.action_loss_weight = action_loss_weight
+        self.lambda_inv = float(lambda_inv)
+        self.lambda_goal = float(lambda_goal)
+        self.goal_horizon = int(goal_horizon)
 
         inner_savi = stage1_model.inner_savi()
         num_slots = inner_savi.num_slots
@@ -460,6 +467,7 @@ class SlotFormerModel(nn.Module):
                 action_dim=raw_action_dim,
                 action_emb_dim=action_embed_dim,
                 robot_slot_idx=robot_slot_idx,
+                chunk_size=chunk_size,
             )
         else:
             self.intact_actor = None
@@ -520,18 +528,35 @@ class SlotFormerModel(nn.Module):
 
         # Calculate INTACT RobotSlotIntentActionActor outputs if enabled
         if self.intact_actor is not None and actions is not None and actions.shape[1] >= 1:
-            # Predict action a_0 given transition z_0 (history_slots[:, 0]) -> z_1 (history_slots[:, 1])
             z_curr = gt_all_slots[:, 0]
-            z_next = gt_all_slots[:, 1]
-            target_act = actions[:, 0]  # Action a_0 that drives z_0 -> z_1
-            prev_act = None             # No previous action at t=0
+            z_local_next = gt_all_slots[:, 1]
+            target_act_local = actions[:, 0]
+            prev_act = None
 
-            act_loss_dict = self.intact_actor.action_nll(
-                z_curr=z_curr,
-                z_next=z_next,
-                target_action=target_act,
-                prev_action=prev_act,
-            )
+            if T > 2:
+                # Select future goal frame (up to goal_horizon or sequence end)
+                goal_idx = min(self.goal_horizon, T - 1)
+                z_goal = gt_all_slots[:, goal_idx]
+                target_act_goal = actions[:, 0]
+
+                act_loss_dict = self.intact_actor.action_nll_dual(
+                    z_curr=z_curr,
+                    z_local_next=z_local_next,
+                    z_goal=z_goal,
+                    target_action_local=target_act_local,
+                    target_action_goal=target_act_goal,
+                    prev_action=prev_act,
+                    lambda_inv=self.lambda_inv,
+                    lambda_goal=self.lambda_goal,
+                )
+            else:
+                act_loss_dict = self.intact_actor.action_nll(
+                    z_curr=z_curr,
+                    z_next=z_local_next,
+                    target_action=target_act_local,
+                    prev_action=prev_act,
+                )
+
             out_dict["action_nll_dict"] = act_loss_dict
 
         if self.use_img_recon_loss or not self.training:

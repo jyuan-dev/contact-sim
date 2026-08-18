@@ -68,9 +68,9 @@ def parse_args():
     parser.add_argument(
         "--goal_mode",
         type=str,
-        choices=["static", "world_model", "cem_mpc", "both"],
+        choices=["static", "subgoal_chaining", "world_model", "cem_mpc", "both", "all"],
         default="both",
-        help="Intent goal mode: 'static' (z_goal), 'world_model'/'cem_mpc' (CEM latent rollout), or 'both'",
+        help="Intent goal mode: 'static' (z_goal), 'subgoal_chaining', 'world_model'/'cem_mpc' (CEM latent rollout), 'both', or 'all'",
     )
     parser.add_argument(
         "--action_scale",
@@ -343,6 +343,23 @@ def evaluate_closed_loop(
                     predicted_delta = act_mu[0].cpu().numpy()
                     prev_action_tensor = act_mu
 
+            elif goal_mode == "subgoal_chaining":
+                # Interpolate intermediate reachable sub-goal within nominal displacement support
+                with torch.no_grad():
+                    delta_z = static_z_goal - current_slot
+                    delta_norm = torch.norm(delta_z, dim=-1, keepdim=True).clamp(min=1e-5)
+                    max_step_norm = 1.2
+                    scale = torch.clamp(max_step_norm / delta_norm, max=1.0)
+                    z_subgoal = current_slot + scale * delta_z
+
+                    act_mu, _ = actor(
+                        z_curr=current_slot,
+                        z_next=z_subgoal,
+                        prev_action=prev_action_tensor,
+                    )
+                    predicted_delta = act_mu[0].cpu().numpy()
+                    prev_action_tensor = act_mu
+
             elif goal_mode in ("world_model", "cem_mpc"):
                 if len(history_slot_list) < history_len:
                     z_history = current_slot.unsqueeze(1).repeat(1, history_len, 1, 1)
@@ -361,22 +378,27 @@ def evaluate_closed_loop(
                     predicted_delta = act_mu[0].cpu().numpy()
                     prev_action_tensor = act_mu
 
-            # Translate continuous displacement to continuous simulator target position
-            target_x = agent_pos[0] + predicted_delta[0] * action_scale
-            target_y = agent_pos[1] + predicted_delta[1] * action_scale
-            target_pos = np.array([
-                np.clip(target_x, 15.0, 497.0),
-                np.clip(target_y, 15.0, 497.0),
-            ], dtype=np.float32)
+            # Unroll single-step action or multi-step action chunk
+            actions_to_exec = predicted_delta.reshape(-1, 2)
+            for act_sub in actions_to_exec:
+                target_x = agent_pos[0] + act_sub[0] * action_scale
+                target_y = agent_pos[1] + act_sub[1] * action_scale
+                target_pos = np.array([
+                    np.clip(target_x, 15.0, 497.0),
+                    np.clip(target_y, 15.0, 497.0),
+                ], dtype=np.float32)
 
-            obs, reward, terminated, truncated, info = env.step(target_pos)
-            agent_pos = np.array([pusht_env.agent.position.x, pusht_env.agent.position.y], dtype=np.float32)
+                obs, reward, terminated, truncated, info = env.step(target_pos)
+                agent_pos = np.array([pusht_env.agent.position.x, pusht_env.agent.position.y], dtype=np.float32)
 
-            ep_return += reward
-            final_coverage = info.get("coverage", final_coverage)
+                ep_return += reward
+                final_coverage = info.get("coverage", final_coverage)
 
-            if info.get("is_success", False) and solved_step is None:
-                solved_step = step + 1
+                if info.get("is_success", False) and solved_step is None:
+                    solved_step = step + 1
+
+                if terminated or truncated:
+                    break
 
             if terminated or truncated:
                 break
@@ -457,7 +479,12 @@ def main():
 
     model_wrapper = load_model(args.ckpt_path, device)
 
-    modes_to_run = ["static", "cem_mpc"] if args.goal_mode == "both" else [args.goal_mode]
+    if args.goal_mode == "both":
+        modes_to_run = ["static", "cem_mpc"]
+    elif args.goal_mode == "all":
+        modes_to_run = ["static", "subgoal_chaining", "cem_mpc"]
+    else:
+        modes_to_run = [args.goal_mode]
     all_mode_results = {}
 
     for mode in modes_to_run:

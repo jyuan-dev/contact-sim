@@ -231,6 +231,7 @@ def main(argv=None):
 
     device_name = args.device or cfg_dict.get("device", "cpu")
     device = torch.device(device_name if torch.cuda.is_available() and device_name != "cpu" else "cpu")
+    model = model.to(device)
     load_checkpoint_state(model, args.ckpt_path, device=device)
 
     eval_mode = str(args.mode or cfg_dict.get("mode", "deterministic")).lower()

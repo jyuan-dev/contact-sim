@@ -96,7 +96,7 @@ class TestSnapshotRoundTrip(unittest.TestCase):
         run = load_snapshot(os.path.join(CONFIG_DIR, "..", "scratch",
                                          "checkpoints", "savi_pusht"))
         self.assertIsNotNone(run)
-        self.assertEqual(run.model.num_slots, 3)
+        self.assertEqual(run.model.num_slots, 4)
         self.assertEqual(run.train.exp_name, "savi_pusht")
 
     def test_save_load_roundtrip(self):

@@ -5,13 +5,13 @@ defaults:
   - override /dataset: pusht
   - override /loss: null
 
-exp_name: "ocvp_intact_slotformer_pusht"
+exp_name: "ocvp_intact_slotformer_pusht_sigreg0001"
 
 dataset:
   load_masks: false
 
 model:
-  stage1_ckpt_path: "scratch/checkpoints/savi_pusht_default_4ep/savi_best.pt"
+  stage1_ckpt_path: "scratch/checkpoints/savi_pusht_sigreg_0001/savi_best.pt"
   stage1_model_type: "savi"
   history_len: 2
   rollout_len: 4
