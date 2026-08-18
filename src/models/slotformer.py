@@ -82,6 +82,8 @@ class SlotRollouter(nn.Module):
         self.enc_t_pe = build_pos_enc(t_pe, history_len, d_model)
         self.enc_slots_pe = build_pos_enc(slots_pe, num_slots, d_model)
         self.out_proj = nn.Linear(d_model, slot_size)
+        nn.init.xavier_uniform_(self.out_proj.weight, gain=0.01)
+        nn.init.zeros_(self.out_proj.bias)
 
     @typechecked
     def forward(
@@ -118,9 +120,11 @@ class SlotRollouter(nn.Module):
             proj_x = proj_x + enc_pe
             trans_out = self.transformer_encoder(proj_x)
 
-            # Predict next step slots from the last N slot tokens
+            # Predict next step slots from the last N slot tokens via residual delta
             last_tokens = trans_out[:, -self.num_slots:]
-            pred_slots = self.out_proj(last_tokens)  # [B, N, slot_size]
+            delta_slots = self.out_proj(last_tokens)  # [B, N, slot_size]
+            last_frame_slots = in_x[:, -self.num_slots:]  # [B, N, slot_size]
+            pred_slots = last_frame_slots + delta_slots
             pred_out.append(pred_slots)
 
             # Shift sequence window: drop oldest frame slots and append newly predicted slots
@@ -152,19 +156,30 @@ class TemporalSelfAttention(nn.Module):
 class InteractiveSelfAttention(nn.Module):
     """
     Interactive Self-Attention modeling inter-object relationships across K slots
-    at each timestep independently.
-    Input: [B, T, K, D] -> Reshape [B * T, K, D] -> MultiHeadAttention -> Reshape [B, T, K, D].
+    at each timestep independently with learned soft-contact gating.
+    Input: [B, T, K, D] -> Reshape [B * T, K, D] -> MultiHeadAttention -> Gated Update -> Reshape [B, T, K, D].
     """
     def __init__(self, d_model: int, num_heads: int, dropout: float = 0.0) -> None:
         super().__init__()
         self.attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, dropout=dropout, batch_first=True)
+        self.gate = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, d_model),
+            nn.Sigmoid(),
+        )
+        # Initialize gate bias to -2.0 so initial cross-slot leakage is suppressed (~0.11)
+        nn.init.zeros_(self.gate[-2].weight)
+        nn.init.constant_(self.gate[-2].bias, -2.0)
 
     @typechecked
     def forward(self, x: Float[torch.Tensor, "B T K D"]) -> Float[torch.Tensor, "B T K D"]:
         B, T, K, D = x.shape
         x_flat = x.reshape(B * T, K, D)
         attn_out, _ = self.attn(x_flat, x_flat, x_flat)
-        return attn_out.reshape(B, T, K, D)
+        gate = self.gate(torch.cat([x_flat, attn_out], dim=-1))
+        gated_attn = gate * attn_out
+        return gated_attn.reshape(B, T, K, D)
 
 
 class SlotTransitionMLP(nn.Module):
@@ -310,6 +325,8 @@ class OCVPSlotRollouter(nn.Module):
         self.enc_t_pe = build_pos_enc(t_pe, history_len, d_model)
         self.enc_slots_pe = build_pos_enc(slots_pe, num_slots, d_model)
         self.out_proj = nn.Linear(d_model, slot_size)
+        nn.init.xavier_uniform_(self.out_proj.weight, gain=0.01)
+        nn.init.zeros_(self.out_proj.bias)
 
     @typechecked
     def forward(
@@ -394,7 +411,9 @@ class OCVPSlotRollouter(nn.Module):
                 layer_out = layer(layer_out, action_emb=film_act_emb)
 
             last_timestep_tokens = layer_out[:, -1]
-            pred_slots = self.out_proj(last_timestep_tokens)
+            delta_slots = self.out_proj(last_timestep_tokens)
+            # Residual delta update relative to the most recent frame in the condition window
+            pred_slots = curr_x[:, -1] + delta_slots
             pred_out.append(pred_slots)
 
             curr_x = torch.cat([curr_x[:, 1:], pred_slots.unsqueeze(1)], dim=1)

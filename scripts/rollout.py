@@ -121,7 +121,8 @@ def run_full_episode_rollout(
     model: torch.nn.Module,
     h5_path: str,
     n_cond_frames: int = 2,
-    num_episodes: int = 2,
+    ep_idx: Optional[int] = None,
+    num_episodes: int = 3,
     device: str = "cpu",
     render_mode: str = "3panel",
     out_gif_prefix: str = "scratch/rollout_full_episode",
@@ -129,26 +130,36 @@ def run_full_episode_rollout(
     """
     Rolls out complete uncropped episodes from start to finish.
     """
-    print(f"\n--- Running Full-Episode Rollout on {h5_path} (Episodes: {num_episodes}) ---")
     h5_file = h5py.File(h5_path, "r")
-    offs = h5_file["episode_ends_offsets"][:] if "episode_ends_offsets" in h5_file else None
-    lens = h5_file["episode_lengths"][:] if "episode_lengths" in h5_file else None
-
-    if offs is None or lens is None:
+    if "ep_offset" in h5_file and "ep_len" in h5_file:
+        offs = h5_file["ep_offset"][:]
+        lens = h5_file["ep_len"][:]
+    elif "episode_ends_offsets" in h5_file and "episode_lengths" in h5_file:
+        offs = h5_file["episode_ends_offsets"][:]
+        lens = h5_file["episode_lengths"][:]
+    elif "meta" in h5_file and "episode_ends" in h5_file["meta"]:
         ends = h5_file["meta"]["episode_ends"][:]
         offs = np.concatenate([[0], ends[:-1]])
         lens = np.diff(np.concatenate([[0], ends]))
+    elif "episode_ends" in h5_file:
+        ends = h5_file["episode_ends"][:]
+        offs = np.concatenate([[0], ends[:-1]])
+        lens = np.diff(np.concatenate([[0], ends]))
+    else:
+        raise KeyError(f"Could not determine episode boundaries in {h5_path}")
 
     val_start_ep = int(len(lens) * 0.8)
+    if ep_idx is not None:
+        target_episodes = [ep_idx]
+    else:
+        target_episodes = [val_start_ep + i for i in range(num_episodes) if (val_start_ep + i) < len(lens)]
+
+    print(f"\n--- Running Full-Episode Rollout on {h5_path} (Target Episodes: {target_episodes}) ---")
     ep_results = []
 
-    for i in range(num_episodes):
-        ep_idx = val_start_ep + i
-        if ep_idx >= len(lens):
-            break
-
-        ep_len = int(lens[ep_idx])
-        ep_off = int(offs[ep_idx])
+    for curr_ep in target_episodes:
+        ep_len = int(lens[curr_ep])
+        ep_off = int(offs[curr_ep])
         frame_idxs = list(range(ep_off, ep_off + ep_len))
 
         frames = h5_file["pixels"][frame_idxs]  # [T, H, W, C]
@@ -258,6 +269,8 @@ def run_rollout_evaluation(
     batch_size: int = 32,
     full_episode: bool = False,
     filter_multi_swap: bool = False,
+    ep_idx: Optional[int] = None,
+    num_episodes: int = 3,
     render_mode: str = "overlay",
     device: str = "cpu",
     out_gif: str = "scratch/rollout.gif",
@@ -294,7 +307,8 @@ def run_rollout_evaluation(
             model=model,
             h5_path=h5_path,
             n_cond_frames=n_cond_frames,
-            num_episodes=2,
+            ep_idx=ep_idx,
+            num_episodes=num_episodes,
             device=device,
             render_mode=render_mode,
             out_gif_prefix="scratch/rollout_full_episode",
@@ -482,6 +496,8 @@ if __name__ == "__main__":
     parser.add_argument("--clips_per_ep", type=int, default=2, help="Clips per episode to sample")
     parser.add_argument("--batch_size", type=int, default=32, help="Evaluation batch size")
     parser.add_argument("--full_episode", action="store_true", help="Evaluate full uncropped episodes")
+    parser.add_argument("--ep_idx", type=int, default=None, help="Specific episode index to evaluate (optional)")
+    parser.add_argument("--num_episodes", type=int, default=3, help="Number of full episodes to evaluate")
     parser.add_argument("--filter_multi_swap", action="store_true", help="Isolate and visualize episodes with slot swapping")
     parser.add_argument("--render_mode", type=str, default="overlay", choices=["overlay", "3panel"], help="Rendering mode for GIFs")
     parser.add_argument("--out_gif", type=str, default="scratch/rollout.gif", help="Output GIF path")
@@ -498,6 +514,8 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         full_episode=args.full_episode,
         filter_multi_swap=args.filter_multi_swap,
+        ep_idx=args.ep_idx,
+        num_episodes=args.num_episodes,
         render_mode=args.render_mode,
         out_gif=args.out_gif,
         out_json=args.out_json,
