@@ -262,6 +262,8 @@ class OCVPSlotRollouter(nn.Module):
         raw_action_dim: int = 0,
         action_embed_dim: int = 64,
         condition_mode: str = "none",
+        robot_slot_idx: int = 0,
+        robot_only_action: bool = True,
     ) -> None:
         super().__init__()
         self.num_slots = num_slots
@@ -270,6 +272,8 @@ class OCVPSlotRollouter(nn.Module):
         self.raw_action_dim = raw_action_dim
         self.action_embed_dim = action_embed_dim
         self.condition_mode = condition_mode.lower()
+        self.robot_slot_idx = int(robot_slot_idx)
+        self.robot_only_action = bool(robot_only_action)
 
         if self.raw_action_dim > 0 and self.condition_mode != "none":
             if self.condition_mode in ("sum", "film"):
@@ -339,9 +343,27 @@ class OCVPSlotRollouter(nn.Module):
             # The window slides by one frame per step, so the actions that
             # produced the frames in the current window are the slice
             # [i, i + curr_t_len) — not a constant prefix.
-            if act_emb_seq is not None and act_emb_seq.shape[1] >= i + curr_t_len:
-                a_sub = act_emb_seq[:, i:i + curr_t_len]  # [B, curr_t_len, D_act]
-                a_sub_slots = a_sub.unsqueeze(2).repeat(1, 1, self.num_slots, 1)  # [B, curr_t_len, K, D_act]
+            if act_emb_seq is not None:
+                if act_emb_seq.shape[1] >= i + curr_t_len:
+                    a_sub = act_emb_seq[:, i:i + curr_t_len]  # [B, curr_t_len, D_act]
+                elif act_emb_seq.shape[1] > i:
+                    avail = act_emb_seq[:, i:]
+                    pad_len = (i + curr_t_len) - act_emb_seq.shape[1]
+                    pad = act_emb_seq[:, -1:].repeat(1, pad_len, 1)
+                    a_sub = torch.cat([avail, pad], dim=1)
+                else:
+                    a_sub = act_emb_seq[:, -1:].repeat(1, curr_t_len, 1)
+
+                if self.robot_only_action:
+                    # Allocate zero action embedding for all slots, and inject action ONLY
+                    # into the robot slot (k=robot_slot_idx) to prevent action broadcast leakage.
+                    a_sub_slots = torch.zeros(
+                        B, curr_t_len, self.num_slots, a_sub.shape[-1], device=curr_x.device, dtype=curr_x.dtype
+                    )
+                    robot_idx = min(self.robot_slot_idx, self.num_slots - 1)
+                    a_sub_slots[:, :, robot_idx] = a_sub
+                else:
+                    a_sub_slots = a_sub.unsqueeze(2).repeat(1, 1, self.num_slots, 1)  # [B, curr_t_len, K, D_act]
 
                 if self.condition_mode == "sum":
                     proj_x = self.in_proj(curr_x) + a_sub_slots
@@ -407,6 +429,7 @@ class SlotFormerModel(nn.Module):
         use_intact_actor: bool = False,
         action_loss_weight: float = 1.0,
         robot_slot_idx: int = 0,
+        robot_only_action: bool = True,
         chunk_size: int = 1,
         lambda_inv: float = 1.0,
         lambda_goal: float = 0.5,
@@ -421,6 +444,8 @@ class SlotFormerModel(nn.Module):
         self.rollouter_type = rollouter_type.lower()
         self.use_intact_actor = use_intact_actor
         self.action_loss_weight = action_loss_weight
+        self.robot_slot_idx = int(robot_slot_idx)
+        self.robot_only_action = bool(robot_only_action)
         self.lambda_inv = float(lambda_inv)
         self.lambda_goal = float(lambda_goal)
         self.goal_horizon = int(goal_horizon)
@@ -446,6 +471,8 @@ class SlotFormerModel(nn.Module):
                 raw_action_dim=raw_action_dim,
                 action_embed_dim=action_embed_dim,
                 condition_mode=condition_mode,
+                robot_slot_idx=robot_slot_idx,
+                robot_only_action=robot_only_action,
             )
         else:
             self.rollouter = SlotRollouter(
@@ -467,6 +494,7 @@ class SlotFormerModel(nn.Module):
                 action_dim=raw_action_dim,
                 action_emb_dim=action_embed_dim,
                 robot_slot_idx=robot_slot_idx,
+                robot_only_action=robot_only_action,
                 chunk_size=chunk_size,
             )
         else:

@@ -167,9 +167,14 @@ def run_full_episode_rollout(
         video = (frames.astype(np.float32) / 127.5) - 1.0
         img_t = torch.from_numpy(video.transpose(0, 3, 1, 2)).unsqueeze(0).to(device)
 
+        act_t = None
+        if "action" in h5_file:
+            actions_raw = h5_file["action"][frame_idxs]
+            act_t = torch.from_numpy(actions_raw.astype(np.float32)).unsqueeze(0).to(device)
+
         start_t = time.time()
         with torch.no_grad():
-            out = model.rollout(img_t, n_cond_frames=n_cond_frames)
+            out = model.rollout(img_t, n_cond_frames=n_cond_frames, actions=act_t)
         eval_time = time.time() - start_t
 
         recon_t = out.get("recon_img")

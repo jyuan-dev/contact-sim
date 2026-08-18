@@ -252,8 +252,13 @@ def plan_action_cem(
         mean = elite_actions.mean(dim=0)
         std = elite_actions.std(dim=0).clamp(min=0.05)
 
-    # Return the first action of the best trajectory [1, action_dim]
-    return mean[0:1]
+    # Predict the corresponding physical sub-goal slots from the planned action sequence
+    best_action_seq = mean.unsqueeze(0)  # [1, H, action_dim]
+    best_pred_slots = model.rollouter(z_history, pred_len=horizon, actions=best_action_seq)  # [1, H, K, D]
+    z_subgoal = best_pred_slots[:, 0]  # [1, K, D]
+
+    # Return full multi-step action chunk [H, action_dim]
+    return mean, z_subgoal
 
 
 def evaluate_closed_loop(
@@ -344,13 +349,21 @@ def evaluate_closed_loop(
                     prev_action_tensor = act_mu
 
             elif goal_mode == "subgoal_chaining":
-                # Interpolate intermediate reachable sub-goal within nominal displacement support
+                # Generate physically consistent intermediate sub-goal from world model rollout
+                if len(history_slot_list) < history_len:
+                    z_history = current_slot.unsqueeze(1).repeat(1, history_len, 1, 1)
+                else:
+                    z_history = torch.stack(history_slot_list, dim=1)  # [1, history_len, K, D]
+
                 with torch.no_grad():
-                    delta_z = static_z_goal - current_slot
-                    delta_norm = torch.norm(delta_z, dim=-1, keepdim=True).clamp(min=1e-5)
-                    max_step_norm = 1.2
-                    scale = torch.clamp(max_step_norm / delta_norm, max=1.0)
-                    z_subgoal = current_slot + scale * delta_z
+                    _, z_subgoal = plan_action_cem(
+                        model=inner_model,
+                        z_history=z_history,
+                        z_goal=static_z_goal,
+                        horizon=4,
+                        num_samples=64,
+                        device=device,
+                    )
 
                     act_mu, _ = actor(
                         z_curr=current_slot,
@@ -367,7 +380,7 @@ def evaluate_closed_loop(
                     z_history = torch.stack(history_slot_list, dim=1)  # [1, history_len, K, D]
 
                 with torch.no_grad():
-                    act_mu = plan_action_cem(
+                    act_mu, _ = plan_action_cem(
                         model=inner_model,
                         z_history=z_history,
                         z_goal=static_z_goal,
@@ -375,10 +388,10 @@ def evaluate_closed_loop(
                         num_samples=64,
                         device=device,
                     )
-                    predicted_delta = act_mu[0].cpu().numpy()
-                    prev_action_tensor = act_mu
+                    predicted_delta = act_mu.cpu().numpy()
+                    prev_action_tensor = act_mu[-1:]
 
-            # Unroll single-step action or multi-step action chunk
+            # Unroll multi-step action chunk (K=4)
             actions_to_exec = predicted_delta.reshape(-1, 2)
             for act_sub in actions_to_exec:
                 target_x = agent_pos[0] + act_sub[0] * action_scale
@@ -390,6 +403,9 @@ def evaluate_closed_loop(
 
                 obs, reward, terminated, truncated, info = env.step(target_pos)
                 agent_pos = np.array([pusht_env.agent.position.x, pusht_env.agent.position.y], dtype=np.float32)
+
+                if save_gif and ep < num_gif_episodes:
+                    ep_frames.append(obs.copy())
 
                 ep_return += reward
                 final_coverage = info.get("coverage", final_coverage)
@@ -449,23 +465,22 @@ def evaluate_closed_loop(
 
     if save_gif and gif_frames_all:
         os.makedirs("scratch", exist_ok=True)
-        gif_filename = f"scratch/pusht_sim_rollout_{goal_mode}.gif"
-        
-        gif_pil_frames = []
-        for frames in gif_frames_all:
-            for f in frames:
-                gif_pil_frames.append(Image.fromarray(f))
-
-        # Always specify loop=0 per workspace rules for infinite loop play
-        gif_pil_frames[0].save(
-            gif_filename,
-            save_all=True,
-            append_images=gif_pil_frames[1:],
-            duration=50,
-            loop=0,
-        )
-        print(f"[PushT Eval] Saved rollout GIF: {gif_filename} (loop=0)")
-        results["gif_path"] = gif_filename
+        saved_gif_paths = []
+        for ep_i, ep_f in enumerate(gif_frames_all):
+            if not ep_f:
+                continue
+            gif_filename = f"scratch/pusht_sim_rollout_{goal_mode}_ep{ep_i}.gif"
+            gif_pil_frames = [Image.fromarray(f) for f in ep_f]
+            gif_pil_frames[0].save(
+                gif_filename,
+                save_all=True,
+                append_images=gif_pil_frames[1:],
+                duration=50,
+                loop=0,
+            )
+            print(f"[PushT Eval] Saved rollout GIF: {gif_filename} (loop=0)")
+            saved_gif_paths.append(gif_filename)
+        results["gif_paths"] = saved_gif_paths
 
     return results
 

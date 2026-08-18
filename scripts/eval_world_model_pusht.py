@@ -131,19 +131,21 @@ def plan_with_world_model(
     Plan optimal action sequence and extract dynamically predicted sub-goal slots z_{t+1}^*.
     Uses physics-guided CEM sampling over the SlotFormer rollouter.
     """
-    # 1. Compute directional bias (approach if far, push toward goal if near)
-    to_block = block_pos[:2] - agent_pos[:2]
-    dist_to_block = np.linalg.norm(to_block)
+    # 1. Compute physics contact bias (flank behind block and push toward goal)
+    to_goal = goal_pos[:2] - block_pos[:2]
+    dist_to_goal = np.linalg.norm(to_goal)
+    push_dir = to_goal / (dist_to_goal + 1e-5)
 
-    if dist_to_block > 45.0:
-        # Move towards the block
-        bias_dir = to_block / (dist_to_block + 1e-5)
+    ideal_agent_pos = block_pos[:2] - push_dir * 32.0
+    to_ideal = ideal_agent_pos - agent_pos[:2]
+    dist_to_ideal = np.linalg.norm(to_ideal)
+
+    if dist_to_ideal > 25.0:
+        bias_dir = to_ideal / (dist_to_ideal + 1e-5)
     else:
-        # Behind block pushing toward the goal
-        to_goal = goal_pos[:2] - block_pos[:2]
-        bias_dir = to_goal / (np.linalg.norm(to_goal) + 1e-5)
+        bias_dir = push_dir
 
-    prior_mean = torch.tensor(bias_dir, dtype=torch.float32, device=device).unsqueeze(0).repeat(horizon, 1) * 0.4
+    prior_mean = torch.tensor(bias_dir, dtype=torch.float32, device=device).unsqueeze(0).repeat(horizon, 1) * 0.5
     mean = prior_mean.clone()
     std = torch.ones(horizon, 2, device=device) * 0.4
 
@@ -174,12 +176,11 @@ def plan_with_world_model(
 
     # Best action trajectory
     best_action_seq = mean.unsqueeze(0)  # [1, H, 2]
-    # Predict the corresponding physical sub-goal slots for next step t+1
-    best_pred_slots = model.rollouter(z_history, pred_len=1, actions=best_action_seq[:, 0:1])  # [1, 1, K, D]
+    # Predict the corresponding physical sub-goal slots for next step from the planned trajectory
+    best_pred_slots = model.rollouter(z_history, pred_len=horizon, actions=best_action_seq)  # [1, H, K, D]
     z_subgoal = best_pred_slots[:, 0]  # [1, K, D]
 
-    best_action = mean[0:1]  # [1, 2]
-    return best_action, z_subgoal
+    return mean, z_subgoal
 
 
 def run_world_model_evaluation(args):
@@ -194,7 +195,7 @@ def run_world_model_evaluation(args):
     static_z_goal, goal_img = get_canonical_goal_slots(model_wrapper, device)
 
     print("\n" + "=" * 75)
-    print(f"ONLINE WORLD MODEL PLANNING & SUB-GOAL ROLLOUT EVALUATION")
+    print(f"ONLINE WORLD MODEL PLANNING & MULTI-STEP ACTION CHUNKING (K={args.horizon})")
     print(f"  Episodes: {args.num_episodes} | Max Steps: {args.max_steps} | Rollout Horizon: {args.horizon} | Samples: {args.num_samples}")
     print("=" * 75)
 
@@ -203,6 +204,7 @@ def run_world_model_evaluation(args):
 
     for ep in range(args.num_episodes):
         ep_seed = args.seed + ep
+        ep_gif_frames = []
         obs, info = env.reset(seed=ep_seed)
         pusht = env.unwrapped
 
@@ -221,7 +223,8 @@ def run_world_model_evaluation(args):
         final_coverage = info.get("coverage", 0.0)
         solved_step = None
 
-        for step in range(args.max_steps):
+        step = 0
+        while step < args.max_steps:
             agent_pos = np.array([pusht.agent.position.x, pusht.agent.position.y], dtype=np.float32)
             block_pos = np.array([pusht.block.position.x, pusht.block.position.y, pusht.block.angle], dtype=np.float32)
 
@@ -240,9 +243,9 @@ def run_world_model_evaluation(args):
             else:
                 z_history = torch.stack(history_slot_list, dim=1)  # [1, history_len, K, D]
 
-            # 2. Plan action and dynamically roll out the next physical sub-goal with SlotFormer
+            # 2. Plan multi-step action chunk (K=4) with SlotFormer
             with torch.no_grad():
-                act_mu, z_subgoal = plan_with_world_model(
+                act_chunk, z_subgoal = plan_with_world_model(
                     model=inner_model,
                     z_history=z_history,
                     z_goal=static_z_goal,
@@ -257,41 +260,63 @@ def run_world_model_evaluation(args):
             # 3. Decode the dynamically rolled out sub-goal slot state into an image
             subgoal_img = decode_slot_image(inner_model.stage1_model, z_subgoal)
 
-            # 4. Execute the planned action in the live environment
-            delta = act_mu[0].cpu().numpy()
-            target_pos = np.array([
-                np.clip(agent_pos[0] + delta[0] * args.action_scale, 15.0, 497.0),
-                np.clip(agent_pos[1] + delta[1] * args.action_scale, 15.0, 497.0),
-            ], dtype=np.float32)
+            # 4. Unroll multi-step action chunk (K=4) smoothly
+            actions_to_exec = act_chunk.cpu().numpy().reshape(-1, 2)
+            for act_sub in actions_to_exec:
+                target_pos = np.array([
+                    np.clip(agent_pos[0] + act_sub[0] * args.action_scale, 15.0, 497.0),
+                    np.clip(agent_pos[1] + act_sub[1] * args.action_scale, 15.0, 497.0),
+                ], dtype=np.float32)
 
-            obs, reward, terminated, truncated, info = env.step(target_pos)
-            ep_return += reward
-            final_coverage = info.get("coverage", final_coverage)
+                obs, reward, terminated, truncated, info = env.step(target_pos)
+                agent_pos = np.array([pusht.agent.position.x, pusht.agent.position.y], dtype=np.float32)
+                block_pos = np.array([pusht.block.position.x, pusht.block.position.y, pusht.block.angle], dtype=np.float32)
 
-            if info.get("is_success", False) and solved_step is None:
-                solved_step = step + 1
+                ep_return += reward
+                final_coverage = info.get("coverage", final_coverage)
+                step += 1
 
-            # Construct 3-panel visualization: [Live Camera Obs | World Model Predicted Sub-Goal | Target Goal]
-            if args.save_gif and ep < 2:
-                h, w = obs.shape[:2]
-                canvas = np.zeros((h + 24, w * 3 + 20, 3), dtype=np.uint8)
-                canvas[24:24+h, 0:w] = obs
-                canvas[24:24+h, w+10:w*2+10] = subgoal_img
-                canvas[24:24+h, w*2+20:w*3+20] = goal_img
+                if info.get("is_success", False) and solved_step is None:
+                    solved_step = step
 
-                cv2.putText(canvas, f"Live Obs (Cov: {final_coverage*100:.0f}%)", (4, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (255, 255, 255), 1)
-                cv2.putText(canvas, f"WM Sub-goal z_t+1", (w + 14, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (0, 255, 120), 1)
-                cv2.putText(canvas, f"Target Goal", (w * 2 + 24, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (200, 200, 255), 1)
-                all_gif_frames.append(canvas)
+                # Construct 3-panel visualization: [Live Camera Obs | World Model Predicted Sub-Goal | Target Goal]
+                if args.save_gif and ep < 3:
+                    h, w = obs.shape[:2]
+                    canvas = np.zeros((h + 24, w * 3 + 20, 3), dtype=np.uint8)
+                    canvas[24:24+h, 0:w] = obs
+                    canvas[24:24+h, w+10:w*2+10] = subgoal_img
+                    canvas[24:24+h, w*2+20:w*3+20] = goal_img
 
-            if step % 25 == 0 or step == args.max_steps - 1 or solved_step:
-                print(f"  Step {step:03d}/{args.max_steps}: Agent=({agent_pos[0]:.1f}, {agent_pos[1]:.1f}) | Block=({block_pos[0]:.1f}, {block_pos[1]:.1f}) | Delta=({delta[0]:.3f}, {delta[1]:.3f}) | Cov={final_coverage*100:.1f}%")
+                    cv2.putText(canvas, f"Live Obs (Cov: {final_coverage*100:.0f}%)", (4, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (255, 255, 255), 1)
+                    cv2.putText(canvas, f"WM Sub-goal (K=4 Chunk)", (w + 14, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (0, 255, 120), 1)
+                    cv2.putText(canvas, f"Target Goal", (w * 2 + 24, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (200, 200, 255), 1)
+                    ep_gif_frames.append(canvas)
 
-            if terminated or truncated:
+                if step % 25 == 0 or step >= args.max_steps or solved_step:
+                    print(f"  Step {step:03d}/{args.max_steps}: Agent=({agent_pos[0]:.1f}, {agent_pos[1]:.1f}) | Block=({block_pos[0]:.1f}, {block_pos[1]:.1f}) | Cov={final_coverage*100:.1f}%")
+
+                if terminated or truncated or step >= args.max_steps:
+                    break
+
+            if terminated or truncated or step >= args.max_steps:
                 break
 
         is_success = bool(final_coverage >= 0.95)
         print(f"  Result Ep {ep+1:02d}: Return={ep_return:.2f} | Final Coverage={final_coverage*100:.1f}% | {'SOLVED' if is_success else 'Unfinished'}")
+
+        if args.save_gif and ep_gif_frames:
+            prefix = args.out_gif.replace(".gif", "")
+            ep_out_gif = f"{prefix}_ep{ep}.gif"
+            os.makedirs(os.path.dirname(os.path.abspath(ep_out_gif)), exist_ok=True)
+            pil_frames = [Image.fromarray(f) for f in ep_gif_frames]
+            pil_frames[0].save(
+                ep_out_gif,
+                save_all=True,
+                append_images=pil_frames[1:],
+                duration=50,
+                loop=0,
+            )
+            print(f"[PushT Eval] Saved Episode {ep} World Model Sub-Goal Planning GIF to: {ep_out_gif} (loop=0)")
 
         episode_results.append({
             "episode": ep,
@@ -303,18 +328,6 @@ def run_world_model_evaluation(args):
         })
 
     env.close()
-
-    if args.save_gif and all_gif_frames:
-        os.makedirs(os.path.dirname(os.path.abspath(args.out_gif)), exist_ok=True)
-        pil_frames = [Image.fromarray(f) for f in all_gif_frames]
-        pil_frames[0].save(
-            args.out_gif,
-            save_all=True,
-            append_images=pil_frames[1:],
-            duration=50,
-            loop=0,
-        )
-        print(f"\n[PushT Eval] Saved World Model Sub-Goal Planning GIF to: {args.out_gif} (loop=0)")
 
     print("\n" + "=" * 75)
     print("WORLD MODEL ONLINE EVALUATION SUMMARY:")

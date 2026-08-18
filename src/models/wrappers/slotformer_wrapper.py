@@ -169,6 +169,7 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         use_intact_actor = model_cfg.get("use_intact_actor", model_cfg.get("use_intact", "intact" in model_type_str))
         action_loss_weight = model_cfg.get("action_loss_weight", 1.0)
         robot_slot_idx = model_cfg.get("robot_slot_idx", 0)
+        robot_only_action = model_cfg.get("robot_only_action", True)
         chunk_size = model_cfg.get("chunk_size", model_cfg.get("action_chunk_size", 1))
         lambda_inv = model_cfg.get("lambda_inv", 1.0)
         lambda_goal = model_cfg.get("lambda_goal", 0.5)
@@ -193,6 +194,7 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
             use_intact_actor=use_intact_actor,
             action_loss_weight=action_loss_weight,
             robot_slot_idx=robot_slot_idx,
+            robot_only_action=robot_only_action,
             chunk_size=chunk_size,
             lambda_inv=lambda_inv,
             lambda_goal=lambda_goal,

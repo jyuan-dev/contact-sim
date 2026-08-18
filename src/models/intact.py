@@ -41,6 +41,7 @@ class INTACT(nn.Module):
         action_dim: int = 2,
         action_emb_dim: int = 64,
         robot_slot_idx: int = 0,
+        robot_only_action: bool = True,
         hidden_dim: int = 256,
         num_heads: int = 4,
         depth: int = 2,
@@ -55,7 +56,8 @@ class INTACT(nn.Module):
         self.chunk_size = chunk_size
         self.total_action_dim = action_dim * chunk_size
         self.action_emb_dim = action_emb_dim
-        self.robot_slot_idx = robot_slot_idx
+        self.robot_slot_idx = int(robot_slot_idx)
+        self.robot_only_action = bool(robot_only_action)
         self.hidden_dim = hidden_dim
         self.min_log_std = min_log_std
         self.max_log_std = max_log_std
@@ -105,7 +107,7 @@ class INTACT(nn.Module):
         z_curr: Float[torch.Tensor, "B K D"],
         z_next: Float[torch.Tensor, "B K D"],
         prev_action: Float[torch.Tensor, "B ActDim"] | None = None,
-    ) -> Float[torch.Tensor, "B FeatDim"]:
+    ) -> Float[torch.Tensor, "..."]:
         """
         Args:
             z_curr: Current slot tokens [B, K, D]
@@ -113,7 +115,8 @@ class INTACT(nn.Module):
             prev_action: Previous action [B, raw_action_dim] or None
 
         Returns:
-            Concatenated actor feature vector [B, hidden_dim + action_emb_dim]
+            Actor feature vector [B, hidden_dim + action_emb_dim] if robot_only_action=True,
+            or [B, K, hidden_dim + action_emb_dim] if robot_only_action=False.
         """
         intent = z_next - z_curr  # [B, K, D]
         grammar = torch.cat([z_curr, intent, z_curr * intent], dim=-1)  # [B, K, 3D]
@@ -123,10 +126,6 @@ class INTACT(nn.Module):
         # Multi-head attention across slots
         attn_out, _ = self.slot_attn(slot_feats, slot_feats, slot_feats)
         slot_feats = self.norm_slot(slot_feats + attn_out)  # [B, K, hidden_dim]
-
-        # Extract robot slot feature
-        robot_idx = min(self.robot_slot_idx, slot_feats.size(1) - 1)
-        robot_feat = slot_feats[:, robot_idx]  # [B, hidden_dim]
 
         # Encode previous action if present
         if self.prev_action_encoder is not None:
@@ -143,9 +142,22 @@ class INTACT(nn.Module):
                 else:
                     prev_act_slice = prev_action
                 prev_act_emb = self.prev_action_encoder(prev_act_slice)
-            return torch.cat([robot_feat, prev_act_emb], dim=-1)
+        else:
+            prev_act_emb = None
 
-        return robot_feat
+        if self.robot_only_action:
+            # Extract ONLY the robot slot feature
+            robot_idx = min(self.robot_slot_idx, slot_feats.size(1) - 1)
+            robot_feat = slot_feats[:, robot_idx]  # [B, hidden_dim]
+            if prev_act_emb is not None:
+                return torch.cat([robot_feat, prev_act_emb], dim=-1)
+            return robot_feat
+        else:
+            # All slots predict action
+            if prev_act_emb is not None:
+                prev_act_emb_k = prev_act_emb.unsqueeze(1).repeat(1, slot_feats.size(1), 1)  # [B, K, action_emb_dim]
+                return torch.cat([slot_feats, prev_act_emb_k], dim=-1)  # [B, K, hidden_dim + action_emb_dim]
+            return slot_feats  # [B, K, hidden_dim]
 
     @typechecked
     def forward(
@@ -159,7 +171,13 @@ class INTACT(nn.Module):
         Returns: (mean, log_std) each [B, total_action_dim]
         """
         feat = self.extract_features(z_curr, z_next, prev_action)
-        params = self.actor_net(feat)
+        if self.robot_only_action:
+            params = self.actor_net(feat)  # [B, 2 * total_action_dim]
+        else:
+            # All slots predict action hypotheses, aggregated across all slots
+            all_params = self.actor_net(feat)  # [B, K, 2 * total_action_dim]
+            params = all_params.mean(dim=1)    # [B, 2 * total_action_dim]
+
         mean, log_std = params.chunk(2, dim=-1)
         return mean, log_std.clamp(self.min_log_std, self.max_log_std)
 

@@ -20,6 +20,7 @@ condition_mode: "film"
 use_intact_actor: true
 action_loss_weight: 1.0
 robot_slot_idx: 0
+robot_only_action: true
 chunk_size: 1
 lambda_inv: 1.0
 lambda_goal: 0.5

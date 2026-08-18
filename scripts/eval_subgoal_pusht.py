@@ -131,6 +131,7 @@ def run_subgoal_evaluation(args):
 
     for ep in range(args.num_episodes):
         ep_seed = args.seed + ep
+        ep_gif_frames = []
         obs, info = env.reset(seed=ep_seed)
         pusht = env.unwrapped
 
@@ -235,7 +236,7 @@ def run_subgoal_evaluation(args):
                     # Overlay labels
                     cv2.putText(canvas, f"Live (Cov: {final_coverage*100:.0f}%)", (4, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
                     cv2.putText(canvas, f"Subgoal {g_idx+1}/{args.num_subgoals}", (w + 14, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 120), 1)
-                    all_gif_frames.append(canvas)
+                    ep_gif_frames.append(canvas)
 
                 if final_coverage >= 0.95:
                     solved = True
@@ -249,6 +250,20 @@ def run_subgoal_evaluation(args):
                 print(f"  🎉 Solved at sub-goal {g_idx+1} (Total Steps: {total_steps})!")
                 break
 
+        if args.save_gif and ep_gif_frames:
+            prefix = args.out_gif.replace(".gif", "")
+            ep_out_gif = f"{prefix}_ep{ep}.gif"
+            os.makedirs(os.path.dirname(os.path.abspath(ep_out_gif)), exist_ok=True)
+            pil_frames = [Image.fromarray(f) for f in ep_gif_frames]
+            pil_frames[0].save(
+                ep_out_gif,
+                save_all=True,
+                append_images=pil_frames[1:],
+                duration=50,
+                loop=0,
+            )
+            print(f"[PushT Eval] Saved Episode {ep} visualization GIF to: {ep_out_gif} (loop=0)")
+
         episode_results.append({
             "episode": ep,
             "seed": ep_seed,
@@ -258,18 +273,6 @@ def run_subgoal_evaluation(args):
         })
 
     env.close()
-
-    if args.save_gif and all_gif_frames:
-        os.makedirs(os.path.dirname(os.path.abspath(args.out_gif)), exist_ok=True)
-        pil_frames = [Image.fromarray(f) for f in all_gif_frames]
-        pil_frames[0].save(
-            args.out_gif,
-            save_all=True,
-            append_images=pil_frames[1:],
-            duration=50,
-            loop=0,
-        )
-        print(f"\n[PushT Eval] Saved composite Sub-Goal visualization GIF to: {args.out_gif} (loop=0)")
 
     print("\n" + "=" * 75)
     print("SUB-GOAL EVALUATION SUMMARY:")

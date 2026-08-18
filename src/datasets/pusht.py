@@ -252,13 +252,19 @@ class DeterministicEpisodeEvalDataset(Dataset):
             gt_masks = np.stack([agent_m, block_m], axis=1)
         gt_masks = torch.from_numpy(gt_masks).float()
 
-        return {
+        item = {
             'data_idx': idx,
             'img': img,
             'gt_masks': gt_masks,
             'episode_idx': episode_idx,
             'start_frame': start_frame,
         }
+
+        if 'action' in self.h5:
+            act: np.ndarray = self.h5['action'][abs_idxs]  # type: ignore[assignment]
+            item['action'] = torch.from_numpy(act.astype(np.float32))
+
+        return item
 
     def __del__(self) -> None:
         if self._h5 is not None:

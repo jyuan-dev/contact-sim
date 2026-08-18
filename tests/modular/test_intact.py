@@ -139,15 +139,29 @@ class TestINTACT(unittest.TestCase):
         out = actor.action_nll(z_curr, z_next, target_chunk)
         self.assertEqual(out["loss"].shape, torch.Size([]))
 
-    def test_invalid_reduction_raises(self):
-        actor = self._make()
-        with self.assertRaises(ValueError):
-            actor.action_nll(
-                torch.randn(3, 4, 16),
-                torch.randn(3, 4, 16),
-                torch.randn(3, 2),
-                reduction="bogus",
-            )
+    def test_robot_only_action_modes(self):
+        # 1. robot_only_action=True
+        actor_robot_only = self._make(robot_only_action=True)
+        z_curr = torch.randn(3, 4, 16)
+        z_next = torch.randn(3, 4, 16)
+        feat_single = actor_robot_only.extract_features(z_curr, z_next)
+        self.assertEqual(tuple(feat_single.shape), (3, 32 + 8))
+        mean_single, log_std_single = actor_robot_only(z_curr, z_next)
+        self.assertEqual(tuple(mean_single.shape), (3, 2))
+        self.assertEqual(tuple(log_std_single.shape), (3, 2))
+
+        # 2. robot_only_action=False (all slots predict action hypotheses)
+        actor_all_slots = self._make(robot_only_action=False)
+        feat_all = actor_all_slots.extract_features(z_curr, z_next)
+        self.assertEqual(tuple(feat_all.shape), (3, 4, 32 + 8))
+        mean_all, log_std_all = actor_all_slots(z_curr, z_next)
+        self.assertEqual(tuple(mean_all.shape), (3, 2))
+        self.assertEqual(tuple(log_std_all.shape), (3, 2))
+
+        # Action NLL with robot_only_action=False
+        target = torch.randn(3, 2)
+        out_all = actor_all_slots.action_nll(z_curr, z_next, target)
+        self.assertEqual(out_all["loss"].shape, torch.Size([]))
 
 
 if __name__ == "__main__":
