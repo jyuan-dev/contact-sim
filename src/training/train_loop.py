@@ -227,10 +227,13 @@ def run_epoch(
 
             if is_train:
                 split = "Train"
-                trainer.log_scalar(f"{split}/Loss", loss_val, global_step)
-                for lk, lv in loss_dict.items():
-                    if lk != "total_loss":
-                        trainer.log_scalar(f"{split}/{lk}", lv, global_step)
+                train_metrics = {
+                    f"{split}/{lk}": float(lv)
+                    for lk, lv in loss_dict.items()
+                    if lk not in ("loss", "total_loss")
+                }
+                train_metrics[f"{split}/Loss"] = loss_val
+                trainer.log_metrics(train_metrics, global_step)
                 global_step += 1
 
                 # ── Slot collapse diagnostics (every 50 steps) ──────────
@@ -238,8 +241,8 @@ def run_epoch(
                     try:
                         from src.metrics.eval_metrics import compute_collapse_diagnostics
                         collapse_metrics = compute_collapse_diagnostics(out)
-                        for ck, cv in collapse_metrics.items():
-                            trainer.log_scalar(f"Collapse/{ck}", cv, global_step)
+                        col_metrics = {f"Collapse/{ck}": float(cv) for ck, cv in collapse_metrics.items()}
+                        trainer.log_metrics(col_metrics, global_step)
                         # Print a one-line summary to console
                         cm = collapse_metrics
                         print(
@@ -258,8 +261,8 @@ def run_epoch(
                         gt_masks = batch.get("gt_masks") if isinstance(batch, dict) else None
                         if gt_masks is not None and out.get("pred_masks") is not None:
                             from src.metrics.eval_metrics import compute_fg_ari
-                            fg_ari = compute_fg_ari(out["pred_masks"], gt_masks)
-                            trainer.log_scalar("Collapse/fg_ari", fg_ari, global_step)
+                            fg_ari = float(compute_fg_ari(out["pred_masks"], gt_masks))
+                            trainer.log_metrics({"Collapse/fg_ari": fg_ari}, global_step)
                             print(f"  [Segmentation] fg_ari={fg_ari:.4f}")
                     except Exception:
                         pass  # best-effort; never crash training
@@ -292,6 +295,15 @@ def run_epoch(
                         sub_losses.setdefault(vk, []).append(vv)
 
     avg_loss = float(np.mean(losses)) if losses else 0.0
+    if not is_train:
+        val_metrics = {
+            f"Val/{vk}": float(np.mean(vvs))
+            for vk, vvs in sub_losses.items()
+            if vk not in ("loss", "total_loss")
+        }
+        val_metrics["Val/Loss"] = avg_loss
+        trainer.log_metrics(val_metrics, global_step)
+
     return avg_loss, global_step
 
 
@@ -391,7 +403,6 @@ def run_training(
             num_epochs=num_epochs,
             stop_training_flag=stop_training_flag,
         )
-        trainer.log_scalar("Val/Loss", avg_val_loss, epoch)
         print(
             f"Epoch [{epoch + 1}/{num_epochs}] "
             f"Validation Loss: {avg_val_loss:.4f}"

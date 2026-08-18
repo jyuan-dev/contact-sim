@@ -124,6 +124,17 @@ class BaseTrainer:
             except Exception:
                 pass
 
+    def log_metrics(self, metrics: dict[str, float], global_step: int) -> None:
+        """Batch-log multiple scalar metrics to TensorBoard and WandB in a single atomic step."""
+        for tag, value in metrics.items():
+            self.writer.add_scalar(tag, value, global_step)
+        if self.use_wandb and self.wandb_run:
+            try:
+                import wandb
+                wandb.log(metrics, step=global_step)
+            except Exception:
+                pass
+
     def log_image(self, tag: str, img_tensor: torch.Tensor, global_step: int) -> None:
         self.writer.add_image(tag, img_tensor, global_step)
 
