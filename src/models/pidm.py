@@ -348,6 +348,35 @@ class PIDMModel(nn.Module):
             p.requires_grad = False
         self.stage1_model.eval()
 
+    @classmethod
+    def from_config(cls, model_cfg: dict, stage1_wrapper: nn.Module) -> "PIDMModel":
+        """
+        Construct a PIDMModel from a flat model-config dict and an already-built
+        Stage 1 wrapper. Owns all PIDM-specific kwarg defaults/aliases so callers
+        (e.g. ``StandardizedSlotFormerWrapper.build``) don't need to know them.
+        """
+        return cls(
+            stage1_model=stage1_wrapper,
+            history_len=model_cfg.get("history_len", 2),
+            rollout_len=model_cfg.get("rollout_len", 4),
+            d_model=model_cfg.get("d_model", 128),
+            num_layers=model_cfg.get("num_layers", 4),
+            num_heads=model_cfg.get("num_heads", 8),
+            ffn_dim=model_cfg.get("ffn_dim", 512),
+            t_pe=model_cfg.get("t_pe", "sin"),
+            slots_pe=model_cfg.get("slots_pe", ""),
+            loss_decay_factor=model_cfg.get("loss_decay_factor", 1.0),
+            use_img_recon_loss=model_cfg.get("use_img_recon_loss", False),
+            condition_mode=model_cfg.get("condition_mode", "goal_film"),
+            goal_slot_idx=model_cfg.get("goal_slot_idx", 2),
+            raw_action_dim=model_cfg.get("raw_action_dim", model_cfg.get("action_dim", 2)),
+            action_embed_dim=model_cfg.get("action_embed_dim", model_cfg.get("action_emb_dim", 64)),
+            action_loss_weight=model_cfg.get("action_loss_weight", 1.0),
+            slot_loss_weight=model_cfg.get("slot_loss_weight", 1.0),
+            robot_slot_idx=model_cfg.get("robot_slot_idx", 0),
+            rollout_consistent=model_cfg.get("rollout_consistent", True),
+        )
+
     def train(self, mode: bool = True) -> "PIDMModel":
         super().train(mode)
         # Always maintain Stage 1 in eval mode

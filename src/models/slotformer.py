@@ -524,6 +524,48 @@ class SlotFormerModel(nn.Module):
             p.requires_grad = False
         self.stage1_model.eval()
 
+    @classmethod
+    def from_config(cls, model_cfg: dict, stage1_wrapper: nn.Module) -> "SlotFormerModel":
+        """
+        Construct a SlotFormerModel from a flat model-config dict and an already-built
+        Stage 1 wrapper. Owns all SlotFormer/OCVP/cOCVP/INTACT-specific kwarg
+        defaults/aliases so callers (e.g. ``StandardizedSlotFormerWrapper.build``)
+        don't need to know them.
+        """
+        model_type_str = str(model_cfg.get("type", model_cfg.get("name", ""))).lower()
+
+        default_rollouter_type = "cocvp" if "cocvp" in model_type_str else (
+            "ocvp" if "ocvp" in model_type_str or "factorized" in model_type_str else "standard"
+        )
+
+        return cls(
+            stage1_model=stage1_wrapper,
+            history_len=model_cfg.get("history_len", 2),
+            rollout_len=model_cfg.get("rollout_len", 4),
+            d_model=model_cfg.get("d_model", 128),
+            num_layers=model_cfg.get("num_layers", 4),
+            num_heads=model_cfg.get("num_heads", 8),
+            ffn_dim=model_cfg.get("ffn_dim", 512),
+            t_pe=model_cfg.get("t_pe", "sin"),
+            slots_pe=model_cfg.get("slots_pe", ""),
+            loss_decay_factor=model_cfg.get("loss_decay_factor", 1.0),
+            use_img_recon_loss=model_cfg.get("use_img_recon_loss", False),
+            rollouter_type=model_cfg.get("rollouter_type", default_rollouter_type),
+            raw_action_dim=model_cfg.get("raw_action_dim", model_cfg.get("action_dim", 2)),
+            action_embed_dim=model_cfg.get("action_embed_dim", model_cfg.get("action_emb_dim", 64)),
+            condition_mode=model_cfg.get("condition_mode", "none"),
+            use_intact_actor=model_cfg.get(
+                "use_intact_actor", model_cfg.get("use_intact", "intact" in model_type_str)
+            ),
+            action_loss_weight=model_cfg.get("action_loss_weight", 1.0),
+            robot_slot_idx=model_cfg.get("robot_slot_idx", 0),
+            robot_only_action=model_cfg.get("robot_only_action", True),
+            chunk_size=model_cfg.get("chunk_size", model_cfg.get("action_chunk_size", 1)),
+            lambda_inv=model_cfg.get("lambda_inv", 1.0),
+            lambda_goal=model_cfg.get("lambda_goal", 0.5),
+            goal_horizon=model_cfg.get("goal_horizon", 4),
+        )
+
     def train(self, mode: bool = True) -> "SlotFormerModel":
         super().train(mode)
         # Keep Stage 1 model in eval mode always

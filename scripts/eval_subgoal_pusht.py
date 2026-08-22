@@ -31,7 +31,7 @@ import gymnasium as gym
 import gym_pusht
 from omegaconf import OmegaConf
 from src.models.factory import build_model
-from scripts.eval_pusht_sim import load_model, preprocess_obs, get_canonical_goal_slots
+from src.eval.pusht_sim_utils import load_model, preprocess_obs, get_canonical_goal_slots
 
 
 def parse_args():

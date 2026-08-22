@@ -34,7 +34,7 @@ import gymnasium as gym
 import gym_pusht
 from omegaconf import OmegaConf
 from src.models.factory import build_model
-from scripts.eval_pusht_sim import load_model, preprocess_obs, get_canonical_goal_slots
+from src.eval.pusht_sim_utils import load_model, preprocess_obs, get_canonical_goal_slots, decode_slot_image
 
 
 def parse_args():
@@ -100,18 +100,6 @@ def parse_args():
         help="Output GIF filepath",
     )
     return parser.parse_args()
-
-
-def decode_slot_image(stage1_model, slots: torch.Tensor) -> np.ndarray:
-    """
-    Decode slot latents [1, K, D] into an RGB image (64, 64, 3) uint8 using SAVi spatial decoder.
-    """
-    inner_savi = stage1_model.inner_savi() if hasattr(stage1_model, "inner_savi") else stage1_model
-    with torch.no_grad():
-        recon_flat, _, masks_flat, _ = inner_savi.decode(slots)
-        recon_img = (recon_flat[0].clamp(-1.0, 1.0) + 1.0) * 127.5
-        recon_np = recon_img.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
-    return recon_np
 
 
 def plan_with_world_model(
