@@ -77,7 +77,7 @@ def bootstrap_checkpoint(ckpt_path: str, cli_overrides: dict | None = None) -> t
                 "name": "slotformer",
                 "type": "slotformer",
                 "num_heads": 8,
-                "stage1_ckpt_path": "scratch/checkpoints/savi_pusht/savi_best.pt",
+                "stage1_ckpt_path": "scratch/checkpoints/savi_pusht_default_4ep/savi_best.pt",
                 **arch,
             }
         }

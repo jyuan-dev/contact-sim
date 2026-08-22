@@ -2,7 +2,7 @@ import unittest
 import torch
 import torch.nn as nn
 
-from src.models.savi import SAVi, SlotAttentionWithBN
+from src.models.savi import SAVi
 from src.models.factory import build_model
 
 

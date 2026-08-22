@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any, Union
 
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
@@ -101,9 +100,9 @@ class StandardizedLeWMWrapper(BaseModelWrapper):
         if video is None:
             raise ValueError("LeWM forward: input dictionary must contain 'img', 'video', or 'pixels'.")
 
-        # Normalize 4D [B, C, H, W] -> 5D [B, 1, C, H, W]
-        if video.ndim == 4:
-            video = video.unsqueeze(1)
+        # Video input must be 5-D [B, T, C, H, W] (same convention as SAVi).
+        if video.ndim != 5:
+            raise ValueError(f"LeWM forward: expected video [B, T, C, H, W], got {tuple(video.shape)}")
 
         # Spatial resolution interpolation if needed
         B, T, C, H, W = video.shape
@@ -124,8 +123,6 @@ class StandardizedLeWMWrapper(BaseModelWrapper):
             "pred_masks": None,
             "post_slots": out["emb"].unsqueeze(2),  # [B, T, 1, D] for slot compatibility
             "init_slots": None,
-            "pred_boxes": None,
-            "pred_logits": None,
             "rollout_slots": None,
             "attn_masks": None,
             "extra": {
@@ -186,7 +183,6 @@ class StandardizedLeWMWrapper(BaseModelWrapper):
             video_resized = video
 
         out = self.model.rollout(video_resized, actions=actions, n_cond_frames=n_cond_frames)
-        total_T = actions.shape[1]
 
         return {
             "input_img": video,

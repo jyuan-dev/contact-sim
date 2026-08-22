@@ -28,12 +28,6 @@ def cosine_anneal_with_warmup(step: int, total_steps: int, warmup_steps: int, lr
     progress = min(max(progress, 0.0), 1.0)
     return min_lr + 0.5 * (lr - min_lr) * (1.0 + math.cos(math.pi * progress))
 
-def get_device(requested_device: Optional[str] = None) -> torch.device:
-    """Get PyTorch device (cuda/cpu)."""
-    if requested_device:
-        return torch.device(requested_device)
-    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 
 # ── Checkpoint saving / loading ──────────────────────────────────────────────
 

@@ -3,7 +3,7 @@
 Quick Inspection & Visualization CLI Tool for SAVi Checkpoints.
 
 Usage:
-  python scripts/infer.py --ckpt_path scratch/checkpoints/savi_pusht/savi_best.pt
+  python scripts/infer.py --ckpt_path scratch/checkpoints/savi_pusht_default_4ep/savi_best.pt
 """
 
 import os
@@ -16,7 +16,6 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from src.datasets.factory import build_dataloader
 from src.metrics import greedy_slot_assignments
 from src.utils.vis_utils import render_slot_overlay_frame, save_frames_to_gif
 from src.utils.training_utils import load_checkpoint_state

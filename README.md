@@ -1,6 +1,6 @@
 # Contact-Sim
 
-An object-centric video learning codebase supporting **Deformable SAVi** and **SAVi** (Slot Attention for Video) baseline models on manipulation and dynamic visual environments.
+An object-centric video learning codebase supporting **SAVi** (Slot Attention for Video) baseline models and Stage 2 slot-predictor world models (SlotFormer/OCVP, INTACT, PIDM, LeWM) on manipulation and dynamic visual environments.
 
 ---
 
@@ -22,18 +22,15 @@ conda activate contact-sim
 pip install -e .
 ```
 
-### 2. Submodule Setup (`slotformer`)
-This repository integrates the third-party **SlotFormer** (`StoSAVi`) codebase located in `third_party/slotformer`.
+### 2. Submodule Setup
+This repository vendors third-party reference codebases under `third_party/` (SlotFormer, gym-pusht, LeWorldModel, etc.).
 
 If initializing a fresh clone of this repository, ensure the submodules are cloned/updated recursively:
 ```bash
 git submodule update --init --recursive
 ```
 
-#### How SlotFormer Integration Works:
-- **Location**: Third-party code resides in [`third_party/slotformer/slotformer/base_slots`](file:///home/jyuan/jyuan-ws/contact-sim/third_party/slotformer/slotformer/base_slots).
-- **Import Shim**: `src/models/savi.py` automatically initializes synthetic `nerv` framework stubs in Python's `sys.modules` and binds `third_party/slotformer/slotformer/base_slots` to `sys.path`.
-- **Zero Third-Party Code Mutation**: In accordance with project architecture rules, no code within `third_party/` is modified. All wrappers and adapters are cleanly implemented in `src/models/` and `src/models/wrappers/`.
+> **Note**: The SAVi model in `src/models/savi.py` is a **native, self-contained port** — it does *not* import from `third_party/slotformer` at runtime. Third-party directories are for reference, environment registration (`gym_pusht`), and data download helpers only.
 
 ---
 
@@ -64,7 +61,7 @@ This repository is integrated with **Weights & Biases (W&B)** for experiment tra
 
 The codebase uses [Hydra](https://hydra.cc/) for configuration management.
 
-### Default Training (Deformable SAVi on PushT Dataset)
+### Default Training (SAVi on PushT Dataset)
 ```bash
 python scripts/train.py
 ```
@@ -120,7 +117,7 @@ contact-sim/
 │   ├── config.yaml         # Main root Hydra experiment config
 │   ├── dataset/            # Dataset configs (pusht, gridshapes)
 │   ├── loss/               # Loss configs (savi_default, savi_sigreg, savi_contrastive, savi_unsupervised, savi_unsupervised_sigreg)
-│   └── model/              # Model configs (deformable_savi, savi)
+│   └── model/              # Model configs (savi, ocvp_intact_slotformer)
 ├── scripts/                # Execution entrypoints (train.py, eval.py)
 ├── src/                    # Modular source code
 │   ├── datasets/           # PyTorch Datasets & DataLoaders

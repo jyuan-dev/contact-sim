@@ -115,15 +115,6 @@ class BaseTrainer:
         print(f"[{self.experiment_name}] Dedicated train log: {self.log_path}", flush=True)
         print(f"💡 HINT: To monitor real-time training progress, view the tail of the log file:\n   tail -f {self.log_path}\n", flush=True)
 
-    def log_scalar(self, tag: str, scalar_value: float, global_step: int) -> None:
-        self.writer.add_scalar(tag, scalar_value, global_step)
-        if self.use_wandb and self.wandb_run:
-            try:
-                import wandb
-                wandb.log({tag: scalar_value}, step=global_step)
-            except Exception:
-                pass
-
     def log_metrics(self, metrics: dict[str, float], global_step: int) -> None:
         """Batch-log multiple scalar metrics to TensorBoard and WandB in a single atomic step."""
         for tag, value in metrics.items():
@@ -134,9 +125,6 @@ class BaseTrainer:
                 wandb.log(metrics, step=global_step)
             except Exception:
                 pass
-
-    def log_image(self, tag: str, img_tensor: torch.Tensor, global_step: int) -> None:
-        self.writer.add_image(tag, img_tensor, global_step)
 
     def close(self) -> None:
         print(f"\n💡 HINT: Training completed! Inspect the tail of the log file using:\n   tail -n 50 {self.log_path}\n", flush=True)

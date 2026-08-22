@@ -23,6 +23,41 @@ GT_COLORS_RGB = {
 }
 
 
+def render_slot_mask_overlay(
+    frame_rgb: np.ndarray,
+    pred_masks_t: np.ndarray | None,
+    alpha: float = 0.60,
+) -> np.ndarray:
+    """
+    Color-coded slot mask overlay on top of ``frame_rgb``.
+
+    Args:
+        frame_rgb: RGB frame [H, W, 3] uint8 in [0, 255].
+        pred_masks_t: Predicted slot masks [K, H, W] float in [0, 1], or None
+            to return the frame unchanged.
+        alpha: Overlay opacity in (0, 1].
+
+    Returns:
+        Overlaid RGB frame [H, W, 3] uint8.
+    """
+    p_slots = frame_rgb.copy().astype(np.float32)
+    if pred_masks_t is not None:
+        K = pred_masks_t.shape[0]
+        slot_map = np.zeros((64, 64, 3), dtype=np.float32)
+        weight_sum = np.zeros((64, 64, 1), dtype=np.float32)
+        for k in range(K):
+            m_k = np.clip(pred_masks_t[k], 0, 1)[..., None]
+            color_k = np.array(SLOT_COLORS_RGB[k % len(SLOT_COLORS_RGB)], dtype=np.float32)
+            slot_map += m_k * color_k
+            weight_sum += m_k
+
+        weight_sum = np.maximum(weight_sum, 1e-6)
+        slot_composite = slot_map / weight_sum
+        active_mask = (weight_sum > 0.15)
+        p_slots[active_mask[:, :, 0]] = (1.0 - alpha) * p_slots[active_mask[:, :, 0]] + alpha * slot_composite[active_mask[:, :, 0]]
+    return np.clip(p_slots, 0, 255).astype(np.uint8)
+
+
 def render_slot_overlay_frame(
     frame_rgb: np.ndarray,
     pred_masks_t: np.ndarray,
@@ -58,23 +93,7 @@ def render_slot_overlay_frame(
                 cv2.drawContours(p_gt, contours, -1, color_bgr, 1)
 
     # 2. Right Panel: Color-Coded Slot Mask Overlay
-    p_slots = frame_rgb.copy().astype(np.float32)
-    K = pred_masks_t.shape[0]
-
-    slot_map = np.zeros((64, 64, 3), dtype=np.float32)
-    weight_sum = np.zeros((64, 64, 1), dtype=np.float32)
-    for k in range(K):
-        m_k = np.clip(pred_masks_t[k], 0, 1)[..., None]
-        color_k = np.array(SLOT_COLORS_RGB[k % len(SLOT_COLORS_RGB)], dtype=np.float32)
-        slot_map += m_k * color_k
-        weight_sum += m_k
-
-    weight_sum = np.maximum(weight_sum, 1e-6)
-    slot_composite = slot_map / weight_sum
-    active_mask = (weight_sum > 0.15)
-    alpha = 0.60
-    p_slots[active_mask[:, :, 0]] = (1.0 - alpha) * p_slots[active_mask[:, :, 0]] + alpha * slot_composite[active_mask[:, :, 0]]
-    p_slots_uint8 = np.clip(p_slots, 0, 255).astype(np.uint8)
+    p_slots_uint8 = render_slot_mask_overlay(frame_rgb, pred_masks_t)
 
     combined = np.hstack([p_gt, p_slots_uint8])
     combined_large = cv2.resize(combined, (480, 240), interpolation=cv2.INTER_NEAREST)

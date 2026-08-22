@@ -44,8 +44,8 @@ class TestGoldenResolution(unittest.TestCase):
         self.assertEqual(run.train.exp_name, "savi_pusht_3slots_sigreg_001")
         self.assertEqual(run.model.num_slots, 3)
 
-    def test_slotformer_roundtrips(self):
-        raw = _compose(["model=slotformer", "model.stage1_ckpt_path=''"])
+    def test_rollouter_roundtrips(self):
+        raw = _compose(["model=ocvp_intact_slotformer", "model.stage1_ckpt_path=''"])
         emitted = RunConfig.from_dict(raw).to_dict()
         self.assertEqual(_norm(emitted), _norm(raw))
 

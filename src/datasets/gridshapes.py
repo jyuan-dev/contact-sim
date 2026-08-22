@@ -8,7 +8,6 @@ Conforms to standard dataset dict contract:
       'data_idx': int,
       'img': torch.Tensor,        # [T, C, H, W] normalized to [-1, 1]
       'gt_masks': torch.Tensor,   # [T, K, H, W] binary object masks [0, 1]
-      'video': torch.Tensor       # Alias for 'img'
   }
 """
 

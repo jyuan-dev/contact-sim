@@ -27,7 +27,7 @@ class MaskSegmentationLoss(nn.Module):
             return torch.tensor(0.0, device=device), {"mask_bce": 0.0, "mask_dice": 0.0}
 
         if gt_masks.ndim == 5:
-            B, T, C, H, W = gt_masks.shape
+            B, T, K, H, W = gt_masks.shape
             if post_masks.shape[-2:] != (H, W):
                 post_masks = F.interpolate(
                     post_masks.view(B * T, -1, post_masks.shape[-2], post_masks.shape[-1]),
@@ -37,12 +37,12 @@ class MaskSegmentationLoss(nn.Module):
                 ).view(B, T, -1, H, W)
 
             pred_m = post_masks.view(B * T, post_masks.shape[2], H, W)
-            gt_m = gt_masks.to(pred_m.device).view(B * T, C, H, W)
+            gt_m = gt_masks.to(pred_m.device).view(B * T, K, H, W)
             N_tot, S_slots = pred_m.shape[:2]
             eps = 1e-6
 
             if self.match_mode == "fixed":
-                num_matched = min(S_slots, C)
+                num_matched = min(S_slots, K)
                 p_matched = pred_m[:, :num_matched].reshape(-1, H, W).float()
                 p_matched = torch.nan_to_num(p_matched, nan=eps).clamp(eps, 1.0 - eps)
                 g_matched = (gt_m[:, :num_matched].to(p_matched.device).reshape(-1, H, W) > 0.5).float()
@@ -77,7 +77,7 @@ class MaskSegmentationLoss(nn.Module):
                     for i in range(N_tot):
                         r_idx, c_idx = linear_sum_assignment(cost_matrix[i])
                         matched_src.append(torch.tensor(r_idx, device=pred_m.device) + i * S_slots)
-                        matched_tgt.append(torch.tensor(c_idx, device=pred_m.device) + i * C)
+                        matched_tgt.append(torch.tensor(c_idx, device=pred_m.device) + i * K)
 
                     matched_src = torch.cat(matched_src)
                     matched_tgt = torch.cat(matched_tgt)

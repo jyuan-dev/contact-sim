@@ -17,7 +17,6 @@ Usage:
 import os
 import sys
 import json
-import time
 import argparse
 import numpy as np
 import torch

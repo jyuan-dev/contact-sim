@@ -32,8 +32,6 @@ if GYM_PUSHT_PATH not in sys.path:
 
 import gymnasium as gym
 import gym_pusht
-from omegaconf import OmegaConf
-from src.models.factory import build_model
 from src.eval.pusht_sim_utils import load_model, preprocess_obs, get_canonical_goal_slots, decode_slot_image
 
 
@@ -187,7 +185,6 @@ def run_world_model_evaluation(args):
     print(f"  Episodes: {args.num_episodes} | Max Steps: {args.max_steps} | Rollout Horizon: {args.horizon} | Samples: {args.num_samples}")
     print("=" * 75)
 
-    all_gif_frames = []
     episode_results = []
 
     for ep in range(args.num_episodes):

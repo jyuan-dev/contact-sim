@@ -162,7 +162,7 @@ class TestPipeline(unittest.TestCase):
 
     def test_04_eval_metrics_pipeline(self):
         """Run eval like scripts/eval.py does: load ckpt, compute metrics."""
-        from src.metrics import EvaluationSuite
+        from src.metrics import DeterministicEvaluator
 
         cfg_dict = _resolve_cfg(_SPEED_OVERRIDES)
         model = build_model(cfg_dict)
@@ -185,17 +185,21 @@ class TestPipeline(unittest.TestCase):
         with torch.no_grad():
             out = model(batch["img"])
 
-        pred_masks = out["pred_masks"][0].cpu().numpy()
         gt_masks = batch.get("gt_masks")
-        gt_dict = {}
-        if gt_masks is not None:
-            gt_np = gt_masks[0].cpu().numpy()
-            gt_dict = {i: gt_np[:, i] for i in range(min(gt_np.shape[1], 3))}
-
-        suite = EvaluationSuite(num_classes=3)
-        metrics = suite.evaluate_sequence_masks(pred_masks, gt_dict)
-        self.assertIn("overall_mIoU", metrics)
-        self.assertIn("total_swap_events", metrics)
+        evaluator = DeterministicEvaluator(
+            num_classes=gt_masks.shape[2] if gt_masks is not None else 2,
+            thresh=0.5,
+        )
+        evaluator.update(
+            pred_masks=out.get("pred_masks"),
+            gt_masks=gt_masks,
+            recon=out.get("recon_img"),
+            video=batch["img"],
+        )
+        raw = evaluator.finalize()
+        self.assertIn("summary", raw)
+        self.assertIn("miou", raw["summary"])
+        self.assertIn("slot_swapping_rate", raw["summary"])
 
 
 if __name__ == "__main__":

@@ -109,15 +109,10 @@ class StandardizedSAViWrapper(BaseModelWrapper):
         # One shape per key: the wrapper owns normalization, consumers take
         # the keys strictly (see ModelOutput in src/models/base.py).
         raw_out = self.model(x)
-        post_masks = raw_out["post_masks"]
-        if post_masks.ndim == 6 and post_masks.shape[3] == 1:
-            post_masks = post_masks.squeeze(3)  # [B, T, K, H, W]
 
         return {
             "input_img": img_tensor,
-            "pred_boxes": None,
-            "pred_logits": None,
-            "pred_masks": post_masks,
+            "pred_masks": raw_out["post_masks"],  # [B, T, K, H, W]
             "recon_img": raw_out["post_recon_combined"],
             "post_slots": raw_out["post_slots"],
         }

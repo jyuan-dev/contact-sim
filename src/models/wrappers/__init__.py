@@ -5,8 +5,11 @@ Importing this package triggers all ``@register_model`` decorators, populating
 the global registry in ``src.models.factory``.
 
 Available wrappers (registered names):
-  - "savi", "stosavi"        → StandardizedSAViWrapper
-  - "slotformer", "slot_former" → StandardizedSlotFormerWrapper
+  - "savi", "stosavi"            → StandardizedSAViWrapper
+  - "slotformer", "slot_former",
+    "ocvp_slotformer", "cocvp_slotformer", "ocvp_intact_slotformer",
+    "pidm", "intact_slotformer", ... → StandardizedSlotFormerWrapper
+  - "lewm", "leworldmodel", "le_wm" → StandardizedLeWMWrapper
 """
 
 from src.models.wrappers.savi_wrapper import (

@@ -3,9 +3,9 @@
 Hydra Modular Training Entrypoint.
 
 Usage:
-    python scripts/train.py                           # Default: Deformable SAVi on PushT
+    python scripts/train.py                           # Default: SAVi on PushT
     python scripts/train.py model=savi loss=savi_sigreg  # Standard SAVi with SIGReg loss
-    python scripts/train.py experiment=slotformer_pusht  # Stage 2 SlotFormer training
+    python scripts/train.py experiment=ocvp_intact_slotformer_pusht  # Stage 2 INTACT training
 """
 
 import os

@@ -1,6 +1,6 @@
 """
 Tests for src/utils/data_utils.py and src/utils/training_utils.py.
-Covers: find_dataset_path, get_dataset (stub), set_seed, cosine_anneal_with_warmup, get_device.
+Covers: find_dataset_path, set_seed, cosine_anneal_with_warmup.
 """
 
 import unittest
@@ -8,8 +8,8 @@ import os
 import math
 import torch
 
-from src.utils.data_utils import find_dataset_path, get_dataset
-from src.utils.training_utils import set_seed, cosine_anneal_with_warmup, get_device
+from src.utils.data_utils import find_dataset_path
+from src.utils.training_utils import set_seed, cosine_anneal_with_warmup
 
 
 # ── data_utils.py ─────────────────────────────────────────────────────────────
@@ -41,28 +41,6 @@ class TestFindDatasetPath(unittest.TestCase):
         """Empty-string path is treated as missing."""
         with self.assertRaises(FileNotFoundError):
             find_dataset_path("", default_filename="non_existent_dummy_123.h5")
-
-
-class TestGetDataset(unittest.TestCase):
-    def test_gridshapes_via_get_dataset(self):
-        """get_dataset should successfully build a GridShapesDataset."""
-        ds = get_dataset(
-            dataset_name="gridshapes",
-            n_sample_frames=4,
-            split="train",
-        )
-        self.assertTrue(len(ds) > 0)
-        sample = ds[0]
-        self.assertIn('img', sample)
-        self.assertIn('gt_masks', sample)
-
-    def test_pusht_skipped_if_missing(self):
-        """get_dataset for pusht should raise if no HDF5 file is found."""
-        h5_path = "/tmp/nonexistent_pusht_9999.h5"
-        with self.assertRaises(Exception):
-            # Pass a dummy filename that does not exist anywhere on system
-            from src.datasets.pusht import PushTMaskHDF5Dataset
-            _ = PushTMaskHDF5Dataset(h5_path=h5_path, split="train")
 
 
 # ── training_utils.py ─────────────────────────────────────────────────────────
@@ -122,23 +100,6 @@ class TestCosineAnnealWithWarmup(unittest.TestCase):
             lr = cosine_anneal_with_warmup(step=step, total_steps=100, warmup_steps=10, lr=1.0, min_lr=1e-4)
             self.assertGreaterEqual(lr, 1e-4 - 1e-8)
             self.assertLessEqual(lr, 1.0 + 1e-8)
-
-
-class TestGetDevice(unittest.TestCase):
-    def test_returns_device(self):
-        """get_device() should return a torch.device instance."""
-        device = get_device()
-        self.assertIsInstance(device, torch.device)
-
-    def test_explicit_cpu(self):
-        """Requesting 'cpu' should return a cpu device."""
-        device = get_device('cpu')
-        self.assertEqual(device.type, 'cpu')
-
-    def test_auto_device_is_cuda_or_cpu(self):
-        """Auto device should be either cuda or cpu."""
-        device = get_device()
-        self.assertIn(device.type, ('cuda', 'cpu'))
 
 
 if __name__ == '__main__':

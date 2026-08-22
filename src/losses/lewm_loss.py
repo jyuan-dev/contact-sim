@@ -10,15 +10,13 @@ Ref:
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from jaxtyping import Float
 
 from src.losses.sigreg import compute_sigreg_statistic
-from src.utils.tensor_checks import typechecked
 
 
 class LeWMLoss(nn.Module):

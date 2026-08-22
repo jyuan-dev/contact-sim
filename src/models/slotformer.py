@@ -7,7 +7,6 @@ References:
 
 from __future__ import annotations
 
-import math
 from typing import Any
 import torch
 import torch.nn as nn
@@ -36,6 +35,31 @@ def build_pos_enc(pos_enc_type: str, length: int, d_model: int) -> nn.Parameter 
         return nn.Parameter(get_sin_pos_enc(length, d_model), requires_grad=False)
     else:
         raise NotImplementedError(f"Unsupported pos enc type: '{pos_enc_type}'")
+
+
+def extract_stage1_slots(stage1_model: nn.Module, video: torch.Tensor) -> torch.Tensor:
+    """Extract per-frame slots [B, T, K, D] from a frozen Stage 1 model."""
+    if hasattr(stage1_model, "encode_slots"):
+        return stage1_model.encode_slots(video)
+
+    inner_savi = stage1_model.inner_savi()
+    if hasattr(inner_savi, "_reset_rnn"):
+        inner_savi._reset_rnn()
+    post_slots, _ = inner_savi.encode(video)
+    return post_slots  # [B, T, K, D]
+
+
+def decode_stage1_slots(stage1_model: nn.Module, slots: torch.Tensor, B: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Decode slots to ``(recon_img, pred_masks)`` via a frozen Stage 1 model."""
+    if hasattr(stage1_model, "decode_slots"):
+        return stage1_model.decode_slots(slots)
+
+    inner_savi = stage1_model.inner_savi()
+    slots_flat = slots.flatten(0, 1)
+    recon_img_flat, _, masks_flat, _ = inner_savi.decode(slots_flat)
+    recon_img = recon_img_flat.unflatten(0, (B, slots.shape[1]))
+    pred_masks = masks_flat.squeeze(2).unflatten(0, (B, slots.shape[1]))
+    return recon_img, pred_masks
 
 
 class SlotRollouter(nn.Module):
@@ -578,18 +602,16 @@ class SlotFormerModel(nn.Module):
         Extract per-frame slots for full video [B, T, C, H, W] using Stage 1 model.
         Returns: [B, T, K, D]
         """
-        if hasattr(self.stage1_model, "encode_slots"):
-            return self.stage1_model.encode_slots(video)
-
-        inner_savi = self.stage1_model.inner_savi()
-        if hasattr(inner_savi, "_reset_rnn"):
-            inner_savi._reset_rnn()
-        post_slots, _ = inner_savi.encode(video)
-        return post_slots  # [B, T, K, D]
+        return extract_stage1_slots(self.stage1_model, video)
 
     def forward(self, batch: dict | Float[torch.Tensor, "B T C H W"]) -> dict[str, Any]:
         """
         Forward pass for Stage 2 training or evaluation.
+
+        Input video is [B, T, C, H, W]. ``pred_masks``/``recon_img``/``post_slots``
+        span only ``history_len + rollout_len`` frames (the predicted window),
+        not the full input ``T`` — align clip length with
+        ``history_len + rollout_len`` before feeding into a full-clip evaluator.
         """
         if isinstance(batch, torch.Tensor):
             video = batch
@@ -650,14 +672,7 @@ class SlotFormerModel(nn.Module):
 
         if self.use_img_recon_loss or not self.training:
             full_slots = torch.cat([history_slots, pred_rollout_slots], dim=1)
-            if hasattr(self.stage1_model, "decode_slots"):
-                recon_img, pred_masks = self.stage1_model.decode_slots(full_slots)
-            else:
-                inner_savi = self.stage1_model.inner_savi()
-                slots_flat = full_slots.flatten(0, 1)
-                recon_img_flat, _, masks_flat, _ = inner_savi.decode(slots_flat)
-                recon_img = recon_img_flat.unflatten(0, (B, full_slots.shape[1]))
-                pred_masks = masks_flat.squeeze(2).unflatten(0, (B, full_slots.shape[1]))
+            recon_img, pred_masks = decode_stage1_slots(self.stage1_model, full_slots, B)
 
             out_dict["recon_img"] = recon_img
             out_dict["pred_masks"] = pred_masks

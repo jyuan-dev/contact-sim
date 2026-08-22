@@ -3,7 +3,7 @@
 Unified Baseline Evaluation & Benchmarking Suite powered by Hydra & Deterministic Seeding.
 
 Usage Examples:
-  python scripts/eval.py model=savi ckpt_path=scratch/checkpoints/savi_pusht/savi_best.pt
+  python scripts/eval.py model=savi ckpt_path=scratch/checkpoints/savi_pusht_default_4ep/savi_best.pt
 """
 
 import argparse
@@ -19,7 +19,6 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from src.models.factory import build_model
 from src.datasets import DeterministicEpisodeEvalDataset
 from src.metrics import DeterministicEvaluator
 from src.utils.training_utils import load_checkpoint_state

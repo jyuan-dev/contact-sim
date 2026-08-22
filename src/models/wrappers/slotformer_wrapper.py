@@ -11,6 +11,7 @@ import os
 from typing import Any, cast
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 from jaxtyping import Float
 
@@ -80,7 +81,7 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         from src.models.slotformer import SlotFormerModel
         from src.models.pidm import PIDMModel
 
-        stage1_ckpt_path = model_cfg.get("stage1_ckpt_path", "scratch/checkpoints/savi_pusht/savi_best.pt")
+        stage1_ckpt_path = model_cfg.get("stage1_ckpt_path", "scratch/checkpoints/savi_pusht_default_4ep/savi_best.pt")
         if stage1_ckpt_path and not os.path.isabs(stage1_ckpt_path):
             stage1_ckpt_path = os.path.join(REPO_ROOT, stage1_ckpt_path)
 
@@ -127,8 +128,6 @@ class StandardizedSlotFormerWrapper(BaseModelWrapper):
         out_dict = self.model(x)
         res = {
             "input_img": out_dict.get("input_img"),
-            "pred_boxes": None,
-            "pred_logits": None,
             "pred_masks": out_dict.get("pred_masks"),
             "recon_img": out_dict.get("recon_img"),
             "post_slots": out_dict.get("post_slots"),

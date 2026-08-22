@@ -11,14 +11,11 @@ Reference:
 
 from __future__ import annotations
 
-import math
-from typing import Optional, Tuple, Dict, Any
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from jaxtyping import Float
 
-from src.utils.tensor_checks import check_tensor_shape, typechecked
+from src.utils.tensor_checks import typechecked
 
 
 class INTACT(nn.Module):

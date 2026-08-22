@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "contact-sim"
 version = "0.1.0"
-description = "Contact-Sim: Object-centric learning with Deformable SAVi and SAVi models"
+description = "Contact-Sim: Object-centric learning with SAVi and SlotFormer world models"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

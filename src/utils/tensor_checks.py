@@ -8,7 +8,7 @@ Two entry points:
   individual argument shapes and cross-argument dimension equality. Violations
   raise :class:`jaxtyping.TypeCheckError` (subclass of ``TypeError``).
 - :func:`check_tensor_shape` — imperative call for checks an annotation
-  cannot express (conditional shapes, dynamic bounds, dict keys, or non-decorated callers).
+  cannot express (conditional shapes, dynamic bounds, or non-decorated callers).
 """
 
 from typing import Optional
@@ -50,11 +50,3 @@ def check_tensor_shape(x, name: str, ndim: Optional[int] = None,
             if expected is not None and dim != expected:
                 raise ValueError(
                     f"{name} must have shape {shape}, got {tuple(x.shape)}")
-
-
-def check_dict_key(data, name: str, key: str) -> None:
-    """Validate that ``data`` is a dict containing ``key``."""
-    if not isinstance(data, dict):
-        raise TypeError(f"{name} must be a dict, got {type(data).__name__}")
-    if key not in data:
-        raise ValueError(f"{name} must contain the '{key}' key")

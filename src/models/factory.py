@@ -49,8 +49,8 @@ def register_model(name: str | list[str]) -> Callable[[type], type]:
         class StandardizedSAViWrapper(BaseModelWrapper):
             ...
 
-        @register_model(["deformable_detr", "deformable-detr"])
-        class StandardizedDeformableDETRWrapper(BaseModelWrapper):
+        @register_model(["lewm", "leworldmodel"])
+        class StandardizedLeWMWrapper(BaseModelWrapper):
             ...
     """
     names = [name] if isinstance(name, str) else list(name)

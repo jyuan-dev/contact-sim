@@ -17,10 +17,6 @@ if HDF5_PLUGIN_PATH and os.path.exists(HDF5_PLUGIN_PATH):
 import torch
 from torch.utils.data import Dataset
 
-# ── ImageNet Normalization constants ─────────────────────────────────────────
-IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-
 # Global zero-copy IPC shared memory cache across DataLoader workers
 _SHARED_PIXELS_CACHE = {}
 

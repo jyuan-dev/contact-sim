@@ -28,7 +28,7 @@ from src.models.wrappers import (
 # ── Moved from model_output.py (only tests used them) ─────────────────────────
 
 _EVAL_OUTPUT_KEYS: frozenset = frozenset({
-    "input_img", "pred_boxes", "pred_logits", "pred_masks", "recon_img", "post_slots",
+    "input_img", "pred_masks", "recon_img", "post_slots",
 })
 
 
@@ -64,8 +64,7 @@ class TestModelRegistry(unittest.TestCase):
                 return cls()
 
             def forward(self, x):
-                return {"input_img": x, "pred_boxes": None, "pred_masks": None,
-                        "pred_logits": None, "recon_img": None, "post_slots": None}
+                return {"input_img": x, "pred_masks": None, "recon_img": None, "post_slots": None}
 
             def compute_loss(self, out, batch):
                 return torch.tensor(0.0), {}
@@ -113,8 +112,7 @@ class TestModelRegistry(unittest.TestCase):
         class _W1(BaseModelWrapper):
             @classmethod
             def build(cls, c): return cls()
-            def forward(self, x): return {"input_img": x, "pred_boxes": None,
-                                          "pred_masks": None, "pred_logits": None,
+            def forward(self, x): return {"input_img": x, "pred_masks": None,
                                           "recon_img": None, "post_slots": None}
             def compute_loss(self, o, b): return torch.tensor(0.0), {}
 
@@ -141,8 +139,7 @@ class TestBaseModelWrapperABC(unittest.TestCase):
         """A subclass missing any abstract method cannot be instantiated."""
         class _Incomplete(BaseModelWrapper):
             def forward(self, x):
-                return {"input_img": x, "pred_boxes": None, "pred_masks": None,
-                        "pred_logits": None, "recon_img": None, "post_slots": None}
+                return {"input_img": x, "pred_masks": None, "recon_img": None, "post_slots": None}
 
         with self.assertRaises(TypeError):
             _Incomplete()
@@ -153,7 +150,7 @@ class TestBaseModelWrapperABC(unittest.TestCase):
 class TestModelOutputContract(unittest.TestCase):
     def test_validate_requires_input_img(self):
         """validate_model_output should raise if 'input_img' is missing."""
-        bad_out = {"pred_boxes": None}
+        bad_out = {"pred_masks": None}
         with self.assertRaises(ValueError):
             _validate_model_output(bad_out, "test_model")
 
@@ -164,7 +161,7 @@ class TestModelOutputContract(unittest.TestCase):
 
     def test_eval_output_keys_set(self):
         """EVAL_OUTPUT_KEYS should contain the core contract keys."""
-        for key in ("input_img", "pred_boxes", "pred_masks", "recon_img"):
+        for key in ("input_img", "pred_masks", "recon_img"):
             self.assertIn(key, _EVAL_OUTPUT_KEYS)
 
 
@@ -180,14 +177,8 @@ class TestStandardizedSAViWrapper(unittest.TestCase):
         wrapper = self._make_savi_wrapper()
         x = torch.randn(2, 3, 3, 64, 64)
         out = wrapper(x)
-        for key in ('pred_boxes', 'pred_masks', 'pred_logits', 'recon_img', 'input_img'):
+        for key in ('pred_masks', 'recon_img', 'input_img', 'post_slots'):
             self.assertIn(key, out)
-
-    def test_pred_boxes_is_none(self):
-        """SAVi wrapper should always set pred_boxes=None."""
-        wrapper = self._make_savi_wrapper()
-        out = wrapper(torch.randn(2, 3, 3, 64, 64))
-        self.assertIsNone(out['pred_boxes'])
 
     def test_all_eval_keys_present(self):
         """All EVAL_OUTPUT_KEYS must be present in SAVi wrapper output."""
@@ -204,8 +195,7 @@ class TestRunEpoch(unittest.TestCase):
         m = mock.MagicMock(spec=BaseModelWrapper)
         dummy_out = {
             "input_img": torch.zeros(2, 3, 3, 64, 64),
-            "pred_boxes": None, "pred_masks": None,
-            "pred_logits": None, "recon_img": None, "post_slots": None,
+            "pred_masks": None, "recon_img": None, "post_slots": None,
         }
         m.return_value = dummy_out
         m.__call__ = lambda self_m, x: dummy_out
@@ -234,8 +224,7 @@ class TestRunEpoch(unittest.TestCase):
 
                 dummy_out = {
                     "input_img": torch.zeros(2, 3, 3, 64, 64),
-                    "pred_boxes": None, "pred_masks": None,
-                    "pred_logits": None, "recon_img": None, "post_slots": None,
+                    "pred_masks": None, "recon_img": None, "post_slots": None,
                 }
                 model.side_effect = lambda x: dummy_out
                 model.compute_loss.return_value = (torch.tensor(0.42), {"recon_loss": 0.42})
@@ -282,8 +271,7 @@ class TestRunEpoch(unittest.TestCase):
                 model = self._make_mock_model()
                 dummy_out = {
                     "input_img": torch.zeros(2, 3, 3, 64, 64),
-                    "pred_boxes": None, "pred_masks": None,
-                    "pred_logits": None, "recon_img": None, "post_slots": None,
+                    "pred_masks": None, "recon_img": None, "post_slots": None,
                 }
                 model.side_effect = lambda x: dummy_out
                 model.compute_loss.return_value = (torch.tensor(0.3), {"recon_loss": 0.3})

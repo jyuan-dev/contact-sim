@@ -12,7 +12,6 @@ Decouples visual slot trajectory prediction from low-level action generation:
 
 from __future__ import annotations
 
-import math
 from typing import Any
 import torch
 import torch.nn as nn
@@ -20,9 +19,11 @@ import torch.nn.functional as F
 from jaxtyping import Float
 
 from src.utils.tensor_checks import typechecked
-from src.models.intact import INTACT, RobotSlotIntentActionActor
+from src.models.intact import RobotSlotIntentActionActor
 from src.models.slotformer import (
     build_pos_enc,
+    extract_stage1_slots,
+    decode_stage1_slots,
     TemporalSelfAttention,
     InteractiveSelfAttention,
     SlotTransitionMLP,
@@ -232,7 +233,6 @@ class GoalConditionedSlotRollouter(nn.Module):
             [B, pred_len, num_slots, slot_size]
         """
         assert x.shape[1] == self.history_len, f"Expected history_len={self.history_len}, got {x.shape[1]}"
-        B = x.shape[0]
 
         goal_emb = self.extract_goal_feature(goal_slots) if goal_slots is not None else None
 
@@ -388,15 +388,7 @@ class PIDMModel(nn.Module):
         """
         Extract per-frame slots [B, T, K, D] using frozen Stage 1 model.
         """
-        if hasattr(self.stage1_model, "encode_slots"):
-            return self.stage1_model.encode_slots(video)
-
-        inner_savi = self.stage1_model.inner_savi()
-        if hasattr(inner_savi, "_reset_rnn"):
-            inner_savi._reset_rnn()
-
-        post_slots, _ = inner_savi.encode(video)
-        return post_slots  # [B, T, K, D]
+        return extract_stage1_slots(self.stage1_model, video)
 
     def forward(self, batch: dict | Float[torch.Tensor, "B T C H W"]) -> dict[str, Any]:
         """
@@ -508,14 +500,7 @@ class PIDMModel(nn.Module):
         # Visual reconstructions if requested
         if self.use_img_recon_loss or not self.training:
             full_slots = torch.cat([history_slots, pred_rollout_slots], dim=1)
-            if hasattr(self.stage1_model, "decode_slots"):
-                recon_img, pred_masks = self.stage1_model.decode_slots(full_slots)
-            else:
-                inner_savi = self.stage1_model.inner_savi()
-                slots_flat = full_slots.flatten(0, 1)
-                recon_img_flat, _, masks_flat, _ = inner_savi.decode(slots_flat)
-                recon_img = recon_img_flat.unflatten(0, (B, full_slots.shape[1]))
-                pred_masks = masks_flat.squeeze(2).unflatten(0, (B, full_slots.shape[1]))
+            recon_img, pred_masks = decode_stage1_slots(self.stage1_model, full_slots, B)
 
             out_dict["recon_img"] = recon_img
             out_dict["pred_masks"] = pred_masks

@@ -3,22 +3,12 @@ import os
 import torch
 
 from src.datasets.factory import build_dataset, build_dataloader
-from src.datasets.pusht import PushTMaskHDF5Dataset, IMAGENET_MEAN, IMAGENET_STD
+from src.datasets.pusht import PushTMaskHDF5Dataset
 from src.datasets.gridshapes import GridShapesDataset
 import numpy as np
 
 
 # ── pusht.py utilities (moved here — only tests used them) ─────────────────────
-
-def _normalize_img(img_tensor):
-    """Normalize a [C,H,W] tensor from [0,1] range to ImageNet zero-mean/unit-std."""
-    return (img_tensor - IMAGENET_MEAN) / IMAGENET_STD
-
-
-def _denormalize_img(img_tensor):
-    """Denormalize a [C,H,W] tensor from ImageNet stats back to [0,1] range."""
-    return img_tensor * IMAGENET_STD.to(img_tensor.device) + IMAGENET_MEAN.to(img_tensor.device)
-
 
 def _augment_background(img_np, bg_threshold=240):
     """Replace white background pixels with a random color in a uint8 HWC image."""
@@ -30,18 +20,6 @@ def _augment_background(img_np, bg_threshold=240):
 
 
 class TestPushTUtilities(unittest.TestCase):
-    def test_normalize_denormalize_roundtrip(self):
-        """normalize followed by denormalize should approximately recover the original."""
-        img = torch.rand(3, 64, 64)
-        recovered = _denormalize_img(_normalize_img(img))
-        self.assertTrue(torch.allclose(img, recovered, atol=1e-5))
-
-    def test_normalize_shifts_range(self):
-        """After normalisation, mean should be close to 0 for ImageNet-like inputs."""
-        img = torch.ones(3, 64, 64) * 0.5
-        normalized = _normalize_img(img)
-        self.assertTrue(normalized.abs().max() < 2.0)
-
     def test_augment_background_replaces_white_pixels(self):
         """augment_background should change purely white pixel values."""
         img = np.ones((32, 32, 3), dtype=np.uint8) * 255  # all white

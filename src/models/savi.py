@@ -183,18 +183,6 @@ class SlotAttention(nn.Module):
 
         return slots
 
-    @property
-    def dtype(self) -> torch.dtype:
-        return self.project_k.weight.dtype
-
-    @property
-    def device(self) -> torch.device:
-        return self.project_k.weight.device
-
-
-# Backward-compatible alias pinned by tests/modular/test_savi_bn.py.
-SlotAttentionWithBN = SlotAttention
-
 
 # ── Slot transition predictors ────────────────────────────────────────────────
 
@@ -299,7 +287,6 @@ class StoSAVi(nn.Module):
         ) | (pred_dict or {})
 
         self.resolution = resolution
-        self.clip_len = clip_len
         self.eps = eps
         self.use_encoder_bn = use_encoder_bn
         self.use_residual_bn = use_residual_bn
@@ -506,15 +493,15 @@ class StoSAVi(nn.Module):
         post_slots, encoder_out = self.encode(img, prev_slots=prev_slots)
 
         out_dict = {
-            'post_slots': post_slots,  # [B, T, num_slots, C]
-            'img': img,  # [B, T, 3, H, W]
+            'post_slots': post_slots,  # [B, T, num_slots, D]
+            'img': img,  # [B, T, C, H, W]
         }
         post_recon_img, post_recons, post_masks, _ = \
             self.decode(post_slots.flatten(0, 1))
         out_dict.update({
             'post_recon_combined': post_recon_img.unflatten(0, (B, T)),
             'post_recons': post_recons.unflatten(0, (B, T)),
-            'post_masks': post_masks.unflatten(0, (B, T)),
+            'post_masks': post_masks.squeeze(2).unflatten(0, (B, T)),  # [B, T, K, H, W]
         })
         return out_dict
 

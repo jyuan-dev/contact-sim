@@ -16,7 +16,7 @@
 #   - Run 5-step dry-run sanity check:
 #       python scripts/train.py dry_run=true
 #   - Evaluate pre-trained checkpoint:
-#       python scripts/eval.py ckpt_path=scratch/checkpoints/savi_pusht/savi_best.pt
+#       python scripts/eval.py ckpt_path=scratch/checkpoints/savi_pusht_default_4ep/savi_best.pt
 # ==============================================================================
 
 # ── 1. Hydra Defaults Composition Group ──────────────────────────────────────

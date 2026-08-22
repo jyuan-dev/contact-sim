@@ -12,16 +12,16 @@ Supports:
 
 Usage Examples:
   # Standard clip rollout (6 frames, 2 cond)
-  python scripts/rollout.py --ckpt_path scratch/checkpoints/slotformer_pusht/slotformer_best.pt --device cuda
+  python scripts/rollout.py --ckpt_path scratch/checkpoints/slotformer_pusht_default_4ep/slotformer_best.pt --device cuda
 
   # Full-episode rollout with 3-panel rendering
-  python scripts/rollout.py --ckpt_path scratch/checkpoints/slotformer_pusht/slotformer_best.pt --full_episode --render_mode 3panel
+  python scripts/rollout.py --ckpt_path scratch/checkpoints/slotformer_pusht_default_4ep/slotformer_best.pt --full_episode --render_mode 3panel
 
   # Long sequence evaluation (16 frames)
-  python scripts/rollout.py --ckpt_path scratch/checkpoints/slotformer_pusht/slotformer_best.pt --n_sample_frames 16
+  python scripts/rollout.py --ckpt_path scratch/checkpoints/slotformer_pusht_default_4ep/slotformer_best.pt --n_sample_frames 16
 
   # Filter and visualize episodes with slot swapping
-  python scripts/rollout.py --ckpt_path scratch/checkpoints/slotformer_pusht/slotformer_best.pt --filter_multi_swap
+  python scripts/rollout.py --ckpt_path scratch/checkpoints/slotformer_pusht_default_4ep/slotformer_best.pt --filter_multi_swap
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ import json
 import os
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 import cv2
 import h5py
@@ -43,10 +43,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from src.models.factory import build_model
 from src.datasets import DeterministicEpisodeEvalDataset
 from src.metrics import greedy_slot_assignments
-from src.utils.vis_utils import render_slot_overlay_frame, save_frames_to_gif, SLOT_COLORS_RGB
+from src.utils.vis_utils import render_slot_overlay_frame, render_slot_mask_overlay, save_frames_to_gif
 from src.utils.training_utils import load_checkpoint_state
 from src.utils.checkpoint_bootstrap import bootstrap_checkpoint
 from src.utils.data_utils import find_dataset_path
@@ -89,23 +88,7 @@ def render_3panel_composite_frame(
         p_recon = np.zeros_like(p_gt)
 
     # 3. Right Panel: Color-Coded Slot Mask Overlay
-    p_slots = frame_rgb.copy().astype(np.float32)
-    if pred_masks_t is not None:
-        K = pred_masks_t.shape[0]
-        slot_map = np.zeros((64, 64, 3), dtype=np.float32)
-        weight_sum = np.zeros((64, 64, 1), dtype=np.float32)
-        for k in range(K):
-            m_k = np.clip(pred_masks_t[k], 0, 1)[..., None]
-            color_k = np.array(SLOT_COLORS_RGB[k % len(SLOT_COLORS_RGB)], dtype=np.float32)
-            slot_map += m_k * color_k
-            weight_sum += m_k
-
-        weight_sum = np.maximum(weight_sum, 1e-6)
-        slot_composite = slot_map / weight_sum
-        active_mask = (weight_sum > 0.15)
-        alpha = 0.60
-        p_slots[active_mask[:, :, 0]] = (1.0 - alpha) * p_slots[active_mask[:, :, 0]] + alpha * slot_composite[active_mask[:, :, 0]]
-    p_slots_uint8 = np.clip(p_slots, 0, 255).astype(np.uint8)
+    p_slots_uint8 = render_slot_mask_overlay(frame_rgb, pred_masks_t)
 
     combined = np.hstack([p_gt, p_recon, p_slots_uint8])
     combined_large = cv2.resize(combined, (720, 240), interpolation=cv2.INTER_NEAREST)

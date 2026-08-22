@@ -3,11 +3,9 @@
 Comprehensive integrity and checksum/header verification for ContactWorld dataset.
 """
 
-import os
 import tarfile
-import requests
 from pathlib import Path
-from huggingface_hub import HfApi, hf_hub_url
+from huggingface_hub import HfApi
 
 REPO_ID = "Pokuang/ContactWorld"
 LOCAL_DIR = Path("/data/ContactWorld")

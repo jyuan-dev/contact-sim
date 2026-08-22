@@ -1,7 +1,6 @@
 """
 Tests for src/training/trainer.py.
-Covers: TeeLogger (write/flush/close) and BaseTrainer (init, log_scalar, log_image,
-        save_checkpoint, close) using a real temporary directory.
+Covers: TeeLogger (write/flush/close) and BaseTrainer (init, close) using a real temporary directory.
 """
 
 import io
@@ -9,7 +8,6 @@ import os
 import sys
 import tempfile
 import unittest
-import torch
 
 from src.training.trainer import TeeLogger, BaseTrainer
 
@@ -87,23 +85,6 @@ class TestBaseTrainer(unittest.TestCase):
         trainer = self._make_trainer()
         trainer.close()
         self.assertTrue(os.path.isfile(os.path.join(self.save_dir, 'train.log')))
-
-    def test_log_scalar_does_not_raise(self):
-        """log_scalar should call TensorBoard without raising."""
-        trainer = self._make_trainer()
-        try:
-            trainer.log_scalar("loss/train", 0.42, global_step=1)
-        finally:
-            trainer.close()
-
-    def test_log_image_does_not_raise(self):
-        """log_image should call TensorBoard with a [C, H, W] image tensor."""
-        trainer = self._make_trainer()
-        try:
-            img = torch.rand(3, 32, 32)
-            trainer.log_image("vis/frame", img, global_step=1)
-        finally:
-            trainer.close()
 
     def test_close_restores_stdout(self):
         """After close(), sys.stdout should be restored to the original stream."""

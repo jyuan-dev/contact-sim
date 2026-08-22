@@ -29,9 +29,7 @@ if GYM_PUSHT_PATH not in sys.path:
 
 import gymnasium as gym
 import gym_pusht
-from omegaconf import OmegaConf
-from src.models.factory import build_model
-from src.eval.pusht_sim_utils import load_model, preprocess_obs, get_canonical_goal_slots
+from src.eval.pusht_sim_utils import load_model, preprocess_obs
 
 
 def parse_args():
@@ -126,7 +124,6 @@ def run_subgoal_evaluation(args):
     print(f"  Episodes: {args.num_episodes} | Sub-goals per ep: {args.num_subgoals} | Steps per sub-goal: {args.steps_per_subgoal}")
     print("=" * 75)
 
-    all_gif_frames = []
     episode_results = []
 
     for ep in range(args.num_episodes):

@@ -10,10 +10,10 @@ BaseModelWrapper        ABC that all wrappers must inherit from.
 ModelOutput             TypedDict defining the standardized forward output contract.
 
 Wrapper classes:
-  StandardizedSAViWrapper
+  StandardizedSAViWrapper, StandardizedSlotFormerWrapper, StandardizedLeWMWrapper
 
 Base model classes:
-  SAVi
+  SAVi, LeWM
 """
 
 from src.models.base import BaseModelWrapper, ModelOutput

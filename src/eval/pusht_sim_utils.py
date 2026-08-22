@@ -38,7 +38,7 @@ def load_model(ckpt_path: str, device: torch.device):
                 "name": "ocvp_intact_slotformer",
                 "type": "ocvp_intact_slotformer",
                 "rollouter_type": "cocvp",
-                "stage1_ckpt_path": "scratch/checkpoints/savi_pusht/savi_best.pt",
+                "stage1_ckpt_path": "scratch/checkpoints/savi_pusht_default_4ep/savi_best.pt",
                 "history_len": 2,
                 "rollout_len": 4,
                 "d_model": 128,
